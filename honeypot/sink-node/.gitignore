@@ -1,0 +1,29 @@
+# ==============================================================================
+# VS Code & Development Environment
+# ==============================================================================
+.vscode/
+# Exception: If you intentionally want to share your team's launch configurations
+# or workspace settings later, uncomment the lines below but ignore files like settings.json:
+# !.vscode/launch.json
+# !.vscode/tasks.json
+*.code-workspace
+
+# Local history extensions
+.history/
+
+# ==============================================================================
+# Docker, Containers, and Data Volumes
+# ==============================================================================
+# Ignore any local volume mount directories where containers write active data
+**/data/
+**/logs/
+**/*_logs/
+**/var/log/
+**/redis_data/
+
+# Ignore Docker build caches or local compose overrides
+.dockerignore
+docker-compose.override.yml
+
+# Ignore temporary files created by Docker BuildKit
+.buildx/
