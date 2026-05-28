@@ -1,1 +1,40 @@
 version: '3.8'
+
+services:
+  # --- THE TRAFFIC CAPTOR ---
+  cowrie_proxy:
+    image: cowrie/cowrie:latest
+    container_name: aws_cowrie_proxy
+    restart: always
+    # Bind standard SSH (22) and Telnet (23) on AWS to Cowrie's internal ports
+    ports:
+      - "22:2222"
+      - "23:2223"
+    environment:
+      - TZ=UTC
+    volumes:
+      # Mount your proxy config files so Cowrie knows to pass traffic to Azure
+      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+    networks:
+      - frontend_net
+
+  # --- THE LOG SHIPPER (Optional but recommended for Async backup) ---
+  log_shipper:
+    image: timberio/vector:0.34.X-alpine
+    container_name: aws_vector_shipper
+    restart: always
+    volumes:
+      # Vector reads the raw connection logs from the proxy volume
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - proxy_logs:/var/log/cowrie
+    depends_on:
+      - cowrie_proxy
+    networks:
+      - frontend_net
+
+volumes:
+  proxy_logs:
+
+networks:
+  frontend_net:
+    driver: bridge

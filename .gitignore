@@ -12,18 +12,21 @@
 .history/
 
 # ==============================================================================
-# Docker, Containers, and Data Volumes
+# Docker Engine & BuildKit Artifacts
 # ==============================================================================
-# Ignore any local volume mount directories where containers write active data
+# Ignore local container data volumes (never upload databases or live logs)
 **/data/
 **/logs/
 **/*_logs/
-**/var/log/
 **/redis_data/
 
-# Ignore Docker build caches or local compose overrides
-.dockerignore
+# Ignore local compose overrides used for testing
 docker-compose.override.yml
 
-# Ignore temporary files created by Docker BuildKit
+# Ignore temporary files and system state created by Docker BuildKit
 .buildx/
+**/.docker/
+
+# Ignore local container status, state logs, or process IDs if generated in-tree
+**/*.pid
+**/*.sock
