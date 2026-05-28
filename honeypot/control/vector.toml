@@ -1,0 +1,33 @@
+# ==============================================================================
+# VECTOR Observability Pipeline Configuration (AWS Deployed Control Node)
+# ==============================================================================
+
+[api]
+# Keeps the internal vector API endpoint closed on AWS
+enabled = false 
+
+# ------------------------------------------------------------------------------
+# SOURCE: Watch Cowrie's live json log file
+# ------------------------------------------------------------------------------
+[sources.cowrie_json_logs]
+type = "file"
+include = ["/var/log/cowrie/cowrie.json"]
+# Start reading new logs as they drop
+read_from = "end" 
+
+# ------------------------------------------------------------------------------
+# SINK: Securely throw the JSON stream out of AWS and straight into Azure
+# ------------------------------------------------------------------------------
+[sinks.azure_analyzer_api]
+type = "http"
+inputs = ["cowrie_json_logs"]
+# Points to your agent-sensor, overwritten at runtime by Vectormethod = "post"
+uri = "${AZURE_TARGET_URI}" 
+method = "post"
+compression = "none"
+
+  [sinks.azure_analyzer_api.request]
+  headers = { "Authorization" = "${AZURE_AUTH_TOKEN}" }
+
+  [sinks.azure_analyzer_api.encoding]
+  codec = "json"

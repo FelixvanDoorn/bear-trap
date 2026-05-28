@@ -1,0 +1,5 @@
+# Username : PrimaryGroup : Password (use * for wildcard/any password)
+root:x:*
+admin:x:*
+ubuntu:x:ubuntu
+deploy:x:P@ssword123
