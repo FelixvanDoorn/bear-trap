@@ -9,25 +9,40 @@ enabled = false
 # ------------------------------------------------------------------------------
 # SOURCE: Watch Cowrie's live json log file
 # ------------------------------------------------------------------------------
-[sources.cowrie_json_logs]
+[sources.cowrie_logs]
 type = "file"
 include = ["/var/log/cowrie/cowrie.json"]
-# Start reading new logs as they drop
-read_from = "end" 
-
+read_from = "beginning" 
+ignore_older_secs = 600
 # ------------------------------------------------------------------------------
-# SINK: Securely throw the JSON stream out of AWS and straight into Azure
+# TRANSFORM: Parse Raw Text into Structured JSON & Add Metadata
 # ------------------------------------------------------------------------------
-[sinks.azure_analyzer_api]
-type = "http"
-inputs = ["cowrie_json_logs"]
-# Points to your agent-sensor, overwritten at runtime by Vectormethod = "post"
-uri = "${AZURE_TARGET_URI}" 
-method = "post"
-compression = "none"
+[transforms.parse_and_enrich]
+type = "remap"
+inputs = ["cowrie_logs"]
+source = """
+# Parse the raw line into actual JSON fields
+parsed, err = parse_json(.message)
+if err != null {
+  .error = "Failed to parse native Cowrie JSON"
+} else {
+  # Merge the parsed JSON directly into the root level of the event
+  this = merge(this, parsed)
+  del(.message) # Drop the redundant original text string to save bandwidth
+}
 
-  [sinks.azure_analyzer_api.request]
-  headers = { "Authorization" = "${AZURE_AUTH_TOKEN}" }
+# Add tracking metadata so GCP knows where this came from
+.cloud_provider = "aws"
+.node_role = "control_proxy"
+"""
+# ------------------------------------------------------------------------------
+# SINK: Securely throw the JSON stream out of AWS and straight into GCP
+# ------------------------------------------------------------------------------
+[sinks.gcp_pubsub_sink]
+type = "gcp_pubsub"
+inputs = ["cowrie_logs"]
+project = "${GCP_PROJECT_ID}"
+topic = "${GCP_PUBSUB_TOPIC}"
 
-  [sinks.azure_analyzer_api.encoding]
-  codec = "json"
+[sinks.gcp_pubsub_sink.encoding]
+codec = "json"

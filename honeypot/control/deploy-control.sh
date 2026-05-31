@@ -36,15 +36,23 @@ if [ ! -f .env ]; then
     echo -e "   Instance ID: ${GREEN}$AWS_INSTANCE_ID${NC}"
     echo -e "   Public IP:   ${GREEN}$AWS_PUBLIC_IP${NC}\n"
 
-    # 2. Interactive Input Sequence for Azure Backend
-    echo -e "${YELLOW}[2/3] Configuring External Data Destination Target...${NC}"
-    read -p "Enter the target Azure Backend IP address: " AZURE_IP
-    read -p "Enter the target Azure API Bearer Token: " AZURE_TOKEN
+    # 2. Interactive Input Sequence for GCP Ingestion Infrastructure
+    echo -e "${YELLOW}[2/3] Configuring GCP Central Logging Sink Target...${NC}"
+    read -p "Enter Target GCP Project ID: " GCP_ID
+    read -p "Enter Target GCP Pub/Sub Topic: " GCP_TOPIC
 
-    if [ -z "$AZURE_IP" ] || [ -z "$AZURE_TOKEN" ]; then
-        echo -e "${RED}❌ ERROR: Azure destination attributes cannot be initialized with blank values.${NC}"
+    echo -e "${YELLOW}Please paste the absolute contents of your GCP Service Account Key JSON file.${NC}"
+    echo -e "${YELLOW}Press Ctrl+D when finished pasting:${NC}"
+    GCP_RAW_JSON=$(cat)
+
+    # Validate inputs aren't empty
+    if [ -z "$GCP_ID" ] || [ -z "$GCP_TOPIC" ] || [ -z "$GCP_RAW_JSON" ]; then
+        echo -e "${RED}❌ ERROR: GCP pipeline attributes cannot be initialized with blank values.${NC}"
         exit 1
     fi
+
+    # Flatten the JSON string so Docker can safely pass it as a single-line environment variable
+    GCP_CLEAN_JSON=$(echo "$GCP_RAW_JSON" | tr -d '\n' | tr -d '\r')
 
     # 3. Dynamic Compilation of the Local Secrets Template
     echo -e "\n${YELLOW}[3/3] Compiling local secrets profile...${NC}"
@@ -55,8 +63,9 @@ if [ ! -f .env ]; then
 # ==============================================================================
 AWS_INSTANCE_ID=$AWS_INSTANCE_ID
 AWS_PUBLIC_IP=$AWS_PUBLIC_IP
-AZURE_BACKEND_IP=$AZURE_IP
-AZURE_API_TOKEN=$AZURE_TOKEN
+GCP_PROJECT_ID=$GCP_ID
+GCP_PUBSUB_TOPIC=$GCP_TOPIC
+GOOGLE_APPLICATION_CREDENTIALS_DATA=$GCP_CLEAN_JSON
 EOF
 
     # Restrict read/write operations on the file strictly to the root owner
@@ -107,7 +116,8 @@ sudo docker compose pull
 sudo docker compose up -d
 
 echo -e "\n${GREEN}======================================================================${NC}"
-echo -e "${GREEN}🚀 DEPLOYMENT COMPLETED SUCCESSFULY!${NC}"
-echo -e "   Control Node IP:        ${YELLOW}$AWS_PUBLIC_IP${NC}"
-echo -e "   Target Receiver Engine: ${YELLOW}$AZURE_BACKEND_IP${NC}"
-echo -e "${GREEN}======================================================================${NC}"
+echo -e "${GREEN}🚀 DEPLOYMENT COMPLETED SUCCESSFULLY!${NC}"
+echo -e "   Control Node IP:     ${YELLOW}$AWS_PUBLIC_IP${NC}"
+echo -e "   Target GCP Sink ID:  ${YELLOW}$GCP_PROJECT_ID${NC}"
+echo -e "   GCP Ingest Topic:    ${YELLOW}$GCP_PUBSUB_TOPIC${NC}"
+echo -e "${GREEN}======

@@ -13,25 +13,28 @@ services:
     environment:
       - TZ=UTC
     volumes:
-      # Mounts our proxy config files so Cowrie knows to pass traffic to our nodes on Azure
-      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      # Mount configuration files to the correct home directory paths
+      - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
+      - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
+      # Share logs out via the named volume
+      - proxy_logs:/home/cowrie/cowrie/var/log/cowrie
     networks:
       - frontend_net
 
-  # --- THE LOG SHIPPER (Optional but recommended for Async backup) ---
+  # --- THE LOG SHIPPER ---
   log_shipper:
     image: timberio/vector:latest-alpine
     container_name: aws_vector_shipper
     restart: always
     volumes:
-      # Vector reads the raw connection logs from the proxy volume
+      # Vector reads configuration and parses shared logs from the proxy
       - ./vector.toml:/etc/vector/vector.toml:ro
-      - proxy_logs:/var/log/cowrie
-      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
-    # Environment Variables, set these up in AWS
+      - proxy_logs:/var/log/cowrie:ro  # Read-only access for safety
     environment:
-      - AZURE_BACKEND_IP=${AZURE_BACKEND_IP}
-      - AZURE_API_TOKEN=${AZURE_API_TOKEN}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
+      # Docker pulls this from your .env file and injects it into Vector
+      - GOOGLE_APPLICATION_CREDENTIALS_DATA=${GOOGLE_APPLICATION_CREDENTIALS_DATA}
     depends_on:
       - cowrie_proxy
     networks:
