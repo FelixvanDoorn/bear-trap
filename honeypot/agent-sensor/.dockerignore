@@ -1,0 +1,23 @@
+# Ignore all cloud environment profiles and keys
+.env
+*.env
+gcp_secrets.*
+*.json
+*.pem
+*.key
+
+# Ignore local version control and documentation
+.git
+.gitignore
+README.md
+LICENSE
+
+# Ignore local python cache maps (crucial for your custom plugins)
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore local volume or log files generated during testing
+*.log
+detector_logs/

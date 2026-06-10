@@ -4,7 +4,7 @@ services:
   # --- THE TRAFFIC CAPTOR ---
   cowrie_proxy:
     image: cowrie/cowrie:latest
-    container_name: aws_cowrie_proxy
+    container_name: aws_cowrie_control
     restart: always
     # Bind standard SSH (22) and Telnet (23) on AWS to Cowrie's internal ports
     ports:
@@ -12,6 +12,24 @@ services:
       - "23:2223"
     environment:
       - TZ=UTC
+    # --- HARDENING PROPERTIES ---
+    security_opt:
+      - no-new-privileges:true  # Prevents processes from gaining more privileges (like SUID elevation)
+    read_only: true              # Makes the container's core root filesystem strictly read-only
+    tmpfs:
+      - /tmp:rw,noexec,nosuid   # Allows Cowrie to write temp files, but blocks execution of scripts in /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'          # Prevents attackers from using your CPU to mine crypto
+          memory: 512M          # Prevents Denial of Service (DoS) memory exhaustion attacks
+    # ----------------------------
+    volumes:
+      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
+      - control_logs:/cowrie/cowrie-git/var/log/cowrie
+    networks:
+      - frontend_net
     volumes:
       # Mount configuration files to the correct home directory paths
       - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro

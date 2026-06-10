@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # --- THE AGENT SENSOR (REAL HONEYPOT SHELL) ---
+  cowrie_detector:
+    image: cowrie/cowrie:latest # Replace with your custom image tag if pre-built
+    container_name: azure_cowrie_detector
+    restart: always
+    # Listening on 2222 to catch traffic routed from the AWS WireGuard tunnel
+    ports:
+      - "2222:2222"
+      ports:
+      - "2223:2223"
+    environment:
+      - TZ=UTC
+    volumes:
+      # Mount your customized configs for the agent shell
+      - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
+      - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
+      # CRITICAL: Mount your custom agent prompt injection script/plugin
+      # (Adjust the container target path depending on how you modified Cowrie's commands/ssh engine)
+      - ./custom_plugins:/home/cowrie/cowrie/src/cowrie/commands:ro
+      # Share detector-specific logs out to Vector
+      - detector_logs:/home/cowrie/cowrie/var/log/cowrie
+    networks:
+      - agent_detector_net
+
+  # --- THE AZURE LOG SHIPPER ---
+  log_shipper:
+    image: timberio/vector:latest-alpine
+    container_name: azure_vector_shipper
+    restart: always
+    volumes:
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - detector_logs:/var/log/cowrie:ro  # Read-only for security
+    environment:
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
+      # Re-use the exact same GCP token injection logic from the AWS node script
+      - GOOGLE_APPLICATION_CREDENTIALS_DATA=${GOOGLE_APPLICATION_CREDENTIALS_DATA}
+    depends_on:
+      - cowrie_detector
+    networks:
+      - agent_detector_net
+
+volumes:
+  detector_logs:
+
+networks:
+  agent_detector_net:
+    driver: bridge

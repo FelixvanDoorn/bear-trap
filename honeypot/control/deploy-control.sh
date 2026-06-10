@@ -51,21 +51,23 @@ if [ ! -f .env ]; then
         exit 1
     fi
 
-    # Flatten the JSON string so Docker can safely pass it as a single-line environment variable
+    # Flatten the JSON string cleanly
     GCP_CLEAN_JSON=$(echo "$GCP_RAW_JSON" | tr -d '\n' | tr -d '\r')
 
     # 3. Dynamic Compilation of the Local Secrets Template
     echo -e "\n${YELLOW}[3/3] Compiling local secrets profile...${NC}"
+    
+    # Notice the single quotes nested inside the assignment: protects raw JSON formatting
     cat << EOF > .env
 # ==============================================================================
 # Automated AWS Control Node Environment Variables (Local Deployment Only)
 # Compiled on: $(date -u)
 # ==============================================================================
-AWS_INSTANCE_ID=$AWS_INSTANCE_ID
-AWS_PUBLIC_IP=$AWS_PUBLIC_IP
-GCP_PROJECT_ID=$GCP_ID
-GCP_PUBSUB_TOPIC=$GCP_TOPIC
-GOOGLE_APPLICATION_CREDENTIALS_DATA=$GCP_CLEAN_JSON
+AWS_INSTANCE_ID='$AWS_INSTANCE_ID'
+AWS_PUBLIC_IP='$AWS_PUBLIC_IP'
+GCP_PROJECT_ID='$GCP_ID'
+GCP_PUBSUB_TOPIC='$GCP_TOPIC'
+GOOGLE_APPLICATION_CREDENTIALS_DATA='$GCP_CLEAN_JSON'
 EOF
 
     # Restrict read/write operations on the file strictly to the root owner
@@ -75,8 +77,10 @@ else
     echo -e "${GREEN}✔ Local environment profile (.env) discovered. Skipping configuration wizard.${NC}"
 fi
 
-# Load variables into the current script execution context
-source .env
+# Safe inline extraction of display items without risking 'source' syntax failures on raw JSON
+AWS_PUBLIC_IP=$(grep -E "^AWS_PUBLIC_IP=" .env | cut -d"'" -f2)
+GCP_PROJECT_ID=$(grep -E "^GCP_PROJECT_ID=" .env | cut -d"'" -f2)
+GCP_PUBSUB_TOPIC=$(grep -E "^GCP_PUBSUB_TOPIC=" .env | cut -d"'" -f2)
 
 # ------------------------------------------------------------------------------
 # PHASE 2: AUTOMATED SYSTEM PACKAGE MANIFEST VERIFICATION
@@ -86,9 +90,15 @@ echo -e "${YELLOW}[*] Inspecting system runtimes and host dependency trees...${N
 if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}Docker runtime not discovered. Initiating host upgrades and engine installation...${NC}"
     sudo apt-get update -y
-    sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-    sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg
+    
+    # Clean, non-deprecated GPG implementation pathing
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
     sudo apt-get update -y
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io
     sudo systemctl enable docker
@@ -120,4 +130,4 @@ echo -e "${GREEN}🚀 DEPLOYMENT COMPLETED SUCCESSFULLY!${NC}"
 echo -e "   Control Node IP:     ${YELLOW}$AWS_PUBLIC_IP${NC}"
 echo -e "   Target GCP Sink ID:  ${YELLOW}$GCP_PROJECT_ID${NC}"
 echo -e "   GCP Ingest Topic:    ${YELLOW}$GCP_PUBSUB_TOPIC${NC}"
-echo -e "${GREEN}======
+echo -e "${GREEN}======================================================================${NC}"
