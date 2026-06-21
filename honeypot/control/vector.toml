@@ -40,9 +40,14 @@ if err != null {
 # ------------------------------------------------------------------------------
 [sinks.gcp_pubsub_sink]
 type = "gcp_pubsub"
-inputs = ["cowrie_logs"]
+inputs = ["parse_and_enrich"]
 project = "${GCP_PROJECT_ID}"
 topic = "${GCP_PUBSUB_TOPIC}"
 
 [sinks.gcp_pubsub_sink.encoding]
 codec = "json"
+
+# Batching optimization for high-frequency scan traffic
+[sinks.gcp_pubsub_sink.batch]
+max_events = 500
+timeout_secs = 2

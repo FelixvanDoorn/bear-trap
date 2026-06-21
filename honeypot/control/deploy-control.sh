@@ -117,9 +117,17 @@ echo -e "${GREEN}✔ Host runtime dependencies verified successfully.${NC}\n"
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}[*] Enforcing configuration file boundaries and launching containers...${NC}"
 
-# Ensure default template text maps are globally readable but not writeable by containers
-chmod 644 cowrie.cfg vector.toml 2>/dev/null || true
-if [ -f userdb.txt ]; then chmod 644 userdb.txt; fi
+# Ensure default template text maps are globally readable 
+chmod 644 cowrie.cfg 2>/dev/null || true
+
+if [ -f userdb.txt ]; then 
+    chmod 644 userdb.txt 
+fi
+
+# Secure Vector's configuration specifically to avoid ownership conflicts
+if [ -f vector.toml ]; then 
+    chmod 664 vector.toml 
+fi
 
 # Refresh engine cache maps and boot the architecture
 sudo docker compose pull

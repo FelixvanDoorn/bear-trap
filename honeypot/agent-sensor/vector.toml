@@ -1,0 +1,68 @@
+# ==============================================================================
+# VECTOR CONFIGURATION PROFILE: AZURE AGENT-DETECTOR NODE
+# Ingests local honeypot execution logs and routes them to central GCP Pub/Sub.
+# ==============================================================================
+
+# Global configuration options
+[api]
+enabled = false # Disable local API to minimize footprint on the honeypot host
+
+# ------------------------------------------------------------------------------
+# INPUTS: Where Vector collects data from
+# ------------------------------------------------------------------------------
+[sources.cowrie_logs]
+type = "file"
+include = ["/var/log/cowrie/cowrie.json"]
+read_from = "beginning"
+
+# ------------------------------------------------------------------------------
+# TRANSFORMS: Parsing, sanitizing, and enriching the logs
+# ------------------------------------------------------------------------------
+[transforms.parse_and_enrich]
+type = "remap"
+inputs = ["cowrie_logs"]
+source = """
+# Step 1: Parse the incoming raw JSON string from Cowrie
+parsed, err = parse_json(.message)
+if err != null {
+  .error = "Telemetry processing exception: unable to parse internal log structure."
+} else {
+  # Merge parsed fields to the root object and remove the duplicate raw text
+  . = merge(., parsed)
+  del(.message)
+}
+
+# Step 2: Strip out local file tracking artifacts to clean up schema bloat
+del(.file)
+del(.source_type)
+
+# Step 3: Multi-Cloud Telemetry Enrichment
+# This explicitly tags the log so BigQuery can trace the execution pivot point.
+.cloud_provider = "azure"
+.node_role = "agent_detector"
+.ingest_timestamp = format_timestamp!(now(), "%Y-%m-%dT%H:%M:%SZ")
+"""
+
+# ------------------------------------------------------------------------------
+# SINKS: Where Vector ships the processed data
+# ------------------------------------------------------------------------------
+[sinks.gcp_pubsub_sink]
+type = "gcp_pubsub"
+inputs = ["parse_and_enrich"]
+
+# These parameters are dynamically injected by Docker from your .env file
+project = "${GCP_PROJECT_ID}"
+topic = "${GCP_PUBSUB_TOPIC}"
+
+# Maps the environment variable key into Vector's GCP Client engine
+credentials_data = "${GOOGLE_APPLICATION_CREDENTIALS_DATA}"
+
+# Encoding configuration ensuring flawless JSON delivery to Pub/Sub
+[sinks.gcp_pubsub_sink.encoding]
+codec = "json"
+
+# Internal queue architecture to protect logs during network drops
+[sinks.gcp_pubsub_sink.buffer]
+type = "memory"
+max_events = 500
+when_full = "block" # Blocks the pipeline instead of dropping telemetry data

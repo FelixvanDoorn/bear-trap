@@ -1,0 +1,63 @@
+# /opt/custom-honeypot/commands.yaml
+# Complete flat registry of targeted commands to trap
+
+commands:
+  # Recon & Networking
+  - nmap
+  - netstat
+  - ifconfig
+  - ip
+  - tcpdump
+  - traceroute
+  - route
+  - ss
+  - dig
+  - nslookup
+  - curl
+  - wget
+
+  # System Info
+  - uname
+  - hostnamectl
+  - lscpu
+  - lshw
+  - free
+  - df
+  - uptime
+  - top
+  - htop
+  - ps
+  - env
+
+  # Security & Firewalls
+  - iptables
+  - ufw
+  - nftables
+  - fail2ban-client
+  - apparmor_status
+  - sestatus
+
+  # Container & Cloud
+  - docker
+  - dockerd
+  - kubectl
+  - kubelet
+  - aws
+  - gcloud
+  - azure
+
+  # Service Management
+  - systemctl
+  - service
+  - init
+  - journalctl
+
+  # Package Managers
+  - apt
+  - apt-get
+  - dpkg
+  - yum
+  - dnf
+  - pacman
+  - pip
+  - npm

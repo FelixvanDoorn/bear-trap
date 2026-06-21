@@ -3,29 +3,46 @@ version: '3.8'
 services:
   # --- THE AGENT SENSOR (REAL HONEYPOT SHELL) ---
   cowrie_detector:
-    image: cowrie/cowrie:latest # Replace with your custom image tag if pre-built
+    image: cowrie/cowrie:latest
     container_name: azure_cowrie_detector
     restart: always
-    # Listening on 2222 to catch traffic routed from the AWS WireGuard tunnel
+    # Expose standard SSH (22) and Telnet (23) publicly on Azure
     ports:
-      - "2222:2222"
-      ports:
-      - "2223:2223"
+      - "22:2222"
+      - "23:2223"
     environment:
       - TZ=UTC
+    # --- HARDENING CONSTRAINTS (Mimics our AWS control node build) ---
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+    # -----------------------------------------------------------------
     volumes:
       # Mount your customized configs for the agent shell
       - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
       - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
-      # CRITICAL: Mount your custom agent prompt injection script/plugin
-      # (Adjust the container target path depending on how you modified Cowrie's commands/ssh engine)
-      - ./custom_plugins:/home/cowrie/cowrie/src/cowrie/commands:ro
+      
+      # Active python command injection files
+  
+      
+      # Passive text files (Overrides Cowrie's internal virtual filesystem)
+      - ./honeyfs:/home/cowrie/cowrie/honeyfs:ro
+      
       # Share detector-specific logs out to Vector
       - detector_logs:/home/cowrie/cowrie/var/log/cowrie
+      - detector_downloads:/home/cowrie/cowrie/var/lib/cowrie/downloads
+      
     networks:
       - agent_detector_net
 
-  # --- THE AZURE LOG SHIPPER ---
+  # --- THE AZURE LOG SHIPPER (SHIPPING TO GCP SINK) ---
   log_shipper:
     image: timberio/vector:latest-alpine
     container_name: azure_vector_shipper
@@ -45,6 +62,7 @@ services:
 
 volumes:
   detector_logs:
+  detector_downloads:
 
 networks:
   agent_detector_net:
