@@ -1,0 +1,15 @@
+[project]
+name = "bear-trap"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.20",
+]

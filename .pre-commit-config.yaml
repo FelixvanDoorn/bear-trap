@@ -1,0 +1,20 @@
+# .pre-commit-config.yaml
+repos:
+  # Basic syntax safety rules for your mixed-language repo
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace   # Trims unnecessary trailing spaces
+      - id: end-of-file-fixer     # Ensures code ends with a clean newline
+      - id: check-yaml            # Validates your commands.yaml layout
+      - id: check-added-large-files
+
+  # The main event: Running Ruff's ultra-fast engine
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20 # Keeps it tracking current production releases
+    hooks:
+      # Hook 1: Analyzes your python hooks/scripts and automatically fixes violations
+      - id: ruff-check
+        args: [ --fix ]
+      # Hook 2: Handles your styling, layout formatting, and indentation matches
+      - id: ruff-format
