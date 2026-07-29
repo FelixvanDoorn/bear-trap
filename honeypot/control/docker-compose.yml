@@ -25,19 +25,13 @@ services:
           memory: 512M          # Prevents Denial of Service (DoS) memory exhaustion attacks
     # ----------------------------
     volumes:
-      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
-      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
-      - control_logs:/cowrie/cowrie-git/var/log/cowrie
-    networks:
-      - frontend_net
-    volumes:
       # Mount configuration files to the correct home directory paths
       - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
       - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
       # Share logs out via the named volume
       - shell_logs:/home/cowrie/cowrie/var/log/cowrie
       - shell_downloads:/home/cowrie/cowrie/var/lib/cowrie/downloads
-    
+
     networks:
       - frontend_net
 
@@ -49,12 +43,14 @@ services:
     volumes:
       # Vector reads configuration and parses shared logs from the shell
       - ./vector.toml:/etc/vector/vector.toml:ro
-      - shell_logs:/var/log/cowrie:ro  # Read-only access for safety
+      # Read-only access for safety
+      - shell_logs:/var/log/cowrie:ro
+      - ./gcp-key.json:/etc/vector/gcp-key.json:ro
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
       # Docker pulls this from your .env file and injects it into Vector
-      - GOOGLE_APPLICATION_CREDENTIALS_DATA=${GOOGLE_APPLICATION_CREDENTIALS_DATA}
+      - GOOGLE_APPLICATION_CREDENTIALS=/etc/vector/gcp-key.json
     depends_on:
       - cowrie_shell
     networks:
@@ -62,7 +58,7 @@ services:
 
 volumes:
   shell_logs:
-  # Added to keep track of any scripts the agents tries to fetch. 
+  # Added to keep track of any scripts the agents tries to fetch.
   shell_downloads:
 
 networks:

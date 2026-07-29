@@ -28,17 +28,20 @@ services:
       # Mount your customized configs for the agent shell
       - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
       - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
-      
-      # Active python command injection files
-  
-      
+
+      # Active python command injection files & config
+      - ./agent-sensor/commands.yaml:/home/cowrie/cowrie/src/cowrie/commands/commands.yaml:ro
+      - ./agent-sensor/__init__.py:/home/cowrie/cowrie/src/cowrie/commands/__init__.py:ro
+      - ./agent-sensor/base_injector.py:/home/cowrie/cowrie/src/cowrie/commands/base_injector.py:ro
+
+
       # Passive text files (Overrides Cowrie's internal virtual filesystem)
       - ./honeyfs:/home/cowrie/cowrie/honeyfs:ro
-      
+
       # Share detector-specific logs out to Vector
       - detector_logs:/home/cowrie/cowrie/var/log/cowrie
       - detector_downloads:/home/cowrie/cowrie/var/lib/cowrie/downloads
-      
+
     networks:
       - agent_detector_net
 
@@ -49,7 +52,10 @@ services:
     restart: always
     volumes:
       - ./vector.toml:/etc/vector/vector.toml:ro
-      - detector_logs:/var/log/cowrie:ro  # Read-only for security
+       # Read-only for security
+      - detector_logs:/var/log/cowrie:ro
+      # Direct keyfile mount
+      - ./gcp_key.json:/etc/vector/gcp_key.json:ro
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
