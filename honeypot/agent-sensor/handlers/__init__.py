@@ -1,4 +1,4 @@
-# agent-sensor/agent-sensor/__init__.py
+# agent-sensor/handlers/__init__.py
 from typing import Dict, Type
 import os
 

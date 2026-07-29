@@ -5,9 +5,13 @@ import os
 from cowrie.shell.command import HoneyPotCommand
 
 
+_HANDLER_CACHE: dict[str, Type[HoneyPotCommand]] = {}
+
+
 class command_dynamic_handler(HoneyPotCommand):
     # Default mock output if not overridden dynamically by __init__.py
     mock_output = None
+    # Module-level registry to store previously created dynamic class types
 
     def log_to_vector(self, cmd_name: str, action_status="intercepted") -> None:
         """
@@ -87,10 +91,20 @@ class command_dynamic_handler(HoneyPotCommand):
 
     def command_factory(cmd_name: str, mock_output: str) -> Type[HoneyPotCommand]:
         """
-        Factory creating dynamic command handlers, as specified in __init__.py
+        Factory creating dynamic command handlers, as specified in __init__.py.
+        These are cached, to limit handlers to be unique by command name.
         """
-        return type(
-            f"Command_{cmd_name}",
+        if cmd_name in _HANDLER_CACHE:
+            return _HANDLER_CACHE[cmd_name]
+
+        # Sanitize class name to ensure valid Python identifier syntax
+        safe_class_name = f"Command_{cmd_name.replace('-', '_').replace('.', '_')}"
+
+        handler_class = type(
+            safe_class_name,
             (command_dynamic_handler,),
             {"mock_output": mock_output},
         )
+
+        _HANDLER_CACHE[cmd_name] = handler_class
+        return handler_class
