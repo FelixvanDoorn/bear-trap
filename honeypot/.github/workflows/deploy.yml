@@ -1,0 +1,86 @@
+name: Bear Trap CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ============================================================================
+  # STAGE 1: CI & Config Validation
+  # ============================================================================
+  validate:
+    name: Lint & Validate Configurations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Validate Vector syntax (passing dummy env vars so validation succeeds)
+      - name: Validate Vector TOML Configuration
+        env:
+          GCP_PROJECT_ID: "dummy-project"
+          GCP_PUBSUB_TOPIC: "dummy-topic"
+          CLOUD_PROVIDER: "ci-test"
+          NODE_ROLE: "ci-validator"
+          SENSOR_REGION: "ci-region"
+        run: |
+          docker run --rm \
+            -e GCP_PROJECT_ID \
+            -e GCP_PUBSUB_TOPIC \
+            -e CLOUD_PROVIDER \
+            -e NODE_ROLE \
+            -e SENSOR_REGION \
+            -v ${{ github.workspace }}/sensor-node/vector.toml:/etc/vector/vector.toml:ro \
+            timberio/vector:latest-alpine vector validate --no-environment /etc/vector/vector.toml
+
+      # Validate Docker Compose syntax
+      - name: Validate Docker Compose Spec
+        run: |
+          cd sensor-node
+          docker compose config --quiet
+
+  # ============================================================================
+  # STAGE 2: Automated Deployment across Multi-Cloud Fleet
+  # ============================================================================
+  deploy:
+    name: Deploy to Edge Sensors (AWS & Azure)
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python for Ansible
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      # SSH Key configured to access both AWS EC2 and Azure VM
+      - name: Configure SSH Private Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SENSOR_SSH_PRIVATE_KEY }}
+
+      # Deploy across all nodes defined in inventory.ini
+      - name: Run Ansible Multi-Cloud Sensor Deployment
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_PUBSUB_TOPIC: ${{ secrets.GCP_PUBSUB_TOPIC }}
+          GCP_KEY_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY_JSON }}
+        run: |
+          cd deploy/ansible
+          ansible-playbook -i inventory.ini playbook.yml \
+            --extra-vars "gcp_project_id=$GCP_PROJECT_ID" \
+            --extra-vars "gcp_pubsub_topic=$GCP_PUBSUB_TOPIC" \
+            --extra-vars "gcp_key_json='$GCP_KEY_JSON'"
