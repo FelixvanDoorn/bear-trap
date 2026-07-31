@@ -1,10 +1,16 @@
-name: Bear Trap CI/CD Pipeline
+name: Bear Trap AWS CI/CD Pipeline
 
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'control/**'
+      - '.github/workflows/deploy-aws.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'control/**'
+      - '.github/workflows/deploy-aws.yml'
 
 jobs:
   # ============================================================================
@@ -27,19 +33,12 @@ jobs:
           NODE_ROLE: "ci-validator"
           SENSOR_REGION: "ci-region"
         run: |
-          docker run --rm \
-            -e GCP_PROJECT_ID \
-            -e GCP_PUBSUB_TOPIC \
-            -e CLOUD_PROVIDER \
-            -e NODE_ROLE \
-            -e SENSOR_REGION \
-            -v ${{ github.workspace }}/sensor-node/vector.toml:/etc/vector/vector.toml:ro \
-            timberio/vector:latest-alpine vector validate --no-environment /etc/vector/vector.toml
+          vector validate --no-environment ./honey-pot/control/vector.toml
 
       # Validate Docker Compose syntax
       - name: Validate Docker Compose Spec
         run: |
-          cd sensor-node
+          cd control
           docker compose config --quiet
 
   # ============================================================================
@@ -58,7 +57,7 @@ jobs:
       - name: Set up Python for Ansible
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install Dependencies
         run: |

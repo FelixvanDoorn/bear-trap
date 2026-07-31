@@ -50,3 +50,16 @@ __pycache__/
 # Ignore the dynamic file system states generated at runtime
 data/fs.pickle
 *.log
+
+# ==========================================
+# Security keys, certificates, and secrets
+# ==========================================
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.asc
+.env
+.env.*

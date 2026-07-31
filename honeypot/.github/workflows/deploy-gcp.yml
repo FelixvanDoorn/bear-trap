@@ -1,0 +1,13 @@
+name: Bear Trap GCP CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'sink-node/**'
+      - '.github/workflows/deploy-gcp.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'sink-node/**'
+      - '.github/workflows/deploy-gcp.yml'

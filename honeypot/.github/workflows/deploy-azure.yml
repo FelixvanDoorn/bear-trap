@@ -1,0 +1,13 @@
+name: Bear Trap Azure CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'agent-sensor/**'
+      - '.github/workflows/deploy-azure.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'agent-sensor/**'
+      - '.github/workflows/deploy-azure.yml'
