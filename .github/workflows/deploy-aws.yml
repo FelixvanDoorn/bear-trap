@@ -4,12 +4,12 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'control/**'
+      - 'honeypot/control/**'
       - '.github/workflows/deploy-aws.yml'
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'control/**'
+      - 'honeypot/control/**'
       - '.github/workflows/deploy-aws.yml'
 
 jobs:
@@ -40,12 +40,12 @@ jobs:
             -e NODE_ROLE="ci-validator"
             -e SENSOR_REGION="ci-region"
           run: |
-            vector validate --no-environment ./honey-pot/control/vector.toml
+            vector validate --no-environment ./honeypot/control/vector.toml
 
       # Validate Docker Compose syntax
       - name: Validate Docker Compose Spec
         run: |
-          cd control
+          cd honeypot/control
           docker compose config --quiet
 
   # ============================================================================
