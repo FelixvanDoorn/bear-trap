@@ -25,15 +25,22 @@ jobs:
         uses: actions/checkout@v4
 
       # Validate Vector syntax (passing dummy env vars so validation succeeds)
+      # Dummy env and vars specified, as these are defined in the current vector.toml
+      # Omission would lead to crashes.
       - name: Validate Vector TOML Configuration
-        env:
-          GCP_PROJECT_ID: "dummy-project"
-          GCP_PUBSUB_TOPIC: "dummy-topic"
-          CLOUD_PROVIDER: "ci-test"
-          NODE_ROLE: "ci-validator"
-          SENSOR_REGION: "ci-region"
-        run: |
-          vector validate --no-environment ./honey-pot/control/vector.toml
+        uses: addnab/docker-run-action@v3
+        with:
+          image: timberio/vector:0.38.X-debian
+          options: >-
+            -v ${{ github.workspace }}:/workspace
+            -w /workspace
+            -e GCP_PROJECT_ID="dummy-project"
+            -e GCP_PUBSUB_TOPIC="dummy-topic"
+            -e CLOUD_PROVIDER="ci-test"
+            -e NODE_ROLE="ci-validator"
+            -e SENSOR_REGION="ci-region"
+          run: |
+            vector validate --no-environment ./honey-pot/control/vector.toml
 
       # Validate Docker Compose syntax
       - name: Validate Docker Compose Spec
@@ -44,42 +51,42 @@ jobs:
   # ============================================================================
   # STAGE 2: Automated Deployment across Multi-Cloud Fleet
   # ============================================================================
-  deploy:
-    name: Deploy to Edge Sensors (AWS & Azure)
-    needs: validate
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+  # deploy:
+  #   name: Deploy to Edge Sensors (AWS & Azure)
+  #   needs: validate
+  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Checkout Code
+  #       uses: actions/checkout@v4
 
-      - name: Set up Python for Ansible
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+  #     - name: Set up Python for Ansible
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.12'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ansible
+  #     - name: Install Dependencies
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         pip install ansible
 
-      # SSH Key configured to access both AWS EC2 and Azure VM
-      - name: Configure SSH Private Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SENSOR_SSH_PRIVATE_KEY }}
+  #     # SSH Key configured to access both AWS EC2 and Azure VM
+  #     - name: Configure SSH Private Key
+  #       uses: webfactory/ssh-agent@v0.9.0
+  #       with:
+  #         ssh-private-key: ${{ secrets.SENSOR_SSH_PRIVATE_KEY }}
 
-      # Deploy across all nodes defined in inventory.ini
-      - name: Run Ansible Multi-Cloud Sensor Deployment
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GCP_PUBSUB_TOPIC: ${{ secrets.GCP_PUBSUB_TOPIC }}
-          GCP_KEY_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY_JSON }}
-        run: |
-          cd deploy/ansible
-          ansible-playbook -i inventory.ini playbook.yml \
-            --extra-vars "gcp_project_id=$GCP_PROJECT_ID" \
-            --extra-vars "gcp_pubsub_topic=$GCP_PUBSUB_TOPIC" \
-            --extra-vars "gcp_key_json='$GCP_KEY_JSON'"
+  #     # Deploy across all nodes defined in inventory.ini
+  #     - name: Run Ansible Multi-Cloud Sensor Deployment
+  #       env:
+  #         ANSIBLE_HOST_KEY_CHECKING: "False"
+  #         GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  #         GCP_PUBSUB_TOPIC: ${{ secrets.GCP_PUBSUB_TOPIC }}
+  #         GCP_KEY_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY_JSON }}
+  #       run: |
+  #         cd deploy/ansible
+  #         ansible-playbook -i inventory.ini playbook.yml \
+  #           --extra-vars "gcp_project_id=$GCP_PROJECT_ID" \
+  #           --extra-vars "gcp_pubsub_topic=$GCP_PUBSUB_TOPIC" \
+  #           --extra-vars "gcp_key_json='$GCP_KEY_JSON'"

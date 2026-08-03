@@ -11,3 +11,15 @@ on:
     paths:
       - 'sink-node/**'
       - '.github/workflows/deploy-gcp.yml'
+
+jobs:
+  # ============================================================================
+  # STAGE 1: CI & Config Validation
+  # ============================================================================
+  validate:
+    name: Lint & Validate Configurations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4

@@ -11,3 +11,65 @@ on:
     paths:
       - 'agent-sensor/**'
       - '.github/workflows/deploy-azure.yml'
+
+jobs:
+  # ============================================================================
+  # STAGE 1: CI & Config Validation
+  # ============================================================================
+  validate:
+    name: Lint & Validate Configurations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Validate Vector syntax (passing dummy env vars so validation succeeds)
+      # Dummy env and vars specified, as these are defined in the current vector.toml
+      # Omission would lead to crashes.
+      - name: Validate Vector TOML Configuration
+        uses: addnab/docker-run-action@v3
+        with:
+          image: timberio/vector:0.38.X-debian
+          options: >-
+            -v ${{ github.workspace }}:/workspace
+            -w /workspace
+            -e GCP_PROJECT_ID="dummy-project"
+            -e GCP_PUBSUB_TOPIC="dummy-topic"
+            -e CLOUD_PROVIDER="ci-test"
+            -e NODE_ROLE="ci-validator"
+            -e SENSOR_REGION="ci-region"
+          run: |
+            vector validate --no-environment ./honey-pot/agent-sensor/vector.toml
+
+      # Validate Docker Compose syntax
+      - name: Validate Docker Compose Spec
+        run: |
+          cd agent-sensor
+          docker compose config --quiet
+
+      # Our agent-sensor node has some additional python scripts.
+      # Adding linting and testing for these.
+      - name: Set up Python for testing and linting
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Install lightweight tooling
+      - name: Install Python Linters & Testers
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+
+      # Fast syntax and code quality checks
+      - name: Lint Python Code with Ruff
+        run: |
+          # F401 (unused imports), E9/F63/F7/F82 (syntax/runtime errors)
+          ruff check honey-pot/agent-sensor/
+
+      # Run tests (if you have test suites defined)
+      - name: Run Pytest
+        run: |
+          if [ -d "honey-pot/agent-sensor/tests" ]; then
+            pytest honey-pot/agent-sensor/tests
+          fi
