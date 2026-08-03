@@ -51,8 +51,8 @@ type = "gcp_pubsub"
 inputs = ["parse_and_enrich"]
 
 # These parameters are dynamically injected by Docker from your .env file
-project_id = "${GCP_PROJECT_ID}"
-topic = "${GCP_PUBSUB_TOPIC}"
+project_id = ${GCP_PROJECT_ID}
+topic = ${GCP_PUBSUB_TOPIC}
 
 # Credentials path pointing to the mounted key inside the container
 credentials_path = "/etc/vector/gcp-key.json"
