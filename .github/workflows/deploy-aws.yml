@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'honeypot/control/**'
+      - 'honeypcontrol/**'
       - '.github/workflows/deploy-aws.yml'
 
 jobs:
@@ -34,8 +34,8 @@ jobs:
           options: >-
             -v ${{ github.workspace }}:/workspace
             -w /workspace
-            -e GCP_PROJECT_ID="dummy-project"
-            -e GCP_PUBSUB_TOPIC="dummy-topic"
+            -e GCP_PROJECT_ID=dummy-project
+            -e GCP_PUBSUB_TOPIC=dummy-topic
             -e CLOUD_PROVIDER="ci-test"
             -e NODE_ROLE="ci-validator"
             -e SENSOR_REGION="ci-region"
