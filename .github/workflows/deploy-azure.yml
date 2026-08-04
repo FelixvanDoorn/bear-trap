@@ -40,7 +40,7 @@ jobs:
             -e NODE_ROLE="ci-validator"
             -e SENSOR_REGION="ci-region"
           run: |
-            vector validate --no-environment ./honeypot/agent-sensor/vector.toml
+            vector validate ./honeypot/agent-sensor/vector.toml
 
       # Validate Docker Compose syntax
       - name: Validate Docker Compose Spec
