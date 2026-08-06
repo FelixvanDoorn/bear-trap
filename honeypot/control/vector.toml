@@ -21,15 +21,19 @@ ignore_older_secs = 600
 type = "remap"
 inputs = ["cowrie_logs"]
 source = """
-# Parse the raw line into actual JSON fields
+# Step 1: Parse the incoming raw JSON string from Cowrie
 parsed, err = parse_json(.message)
 if err != null {
-  .error = "Failed to parse native Cowrie JSON"
+  .error = "Telemetry processing exception: unable to parse internal log structure."
 } else {
-  # Merge the parsed JSON directly into the root level of the event
-  this = merge(this, parsed)
-  del(.message) # Drop the redundant original text string to save bandwidth
+  # Merge parsed fields to the root object and remove the duplicate raw text
+  . = merge(., parsed)
+  del(.message)
 }
+
+# Step 2: Strip out local file tracking artifacts to clean up schema bloat
+del(.file)
+del(.source_type)
 
 # Add tracking metadata so GCP knows where this came from
 .cloud_provider = "aws"
@@ -41,8 +45,8 @@ if err != null {
 [sinks.gcp_pubsub_sink]
 type = "gcp_pubsub"
 inputs = ["parse_and_enrich"]
-project = "${GCP_PROJECT_ID:-dummy-project}"
-topic = "${GCP_PUBSUB_TOPIC:-dummy-topic}"
+project = "${GCP_PROJECT_ID}"
+topic = "${GCP_PUBSUB_TOPIC}"
 # Credentials path pointing to the mounted key inside the container
 credentials_path = "/etc/vector/gcp-key.json"
 

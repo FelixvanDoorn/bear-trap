@@ -31,8 +31,11 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: timberio/vector:0.38.X-debian
-          options: -v ${{ github.workspace }}:/workspace -w /workspace
+          options: -v ${{ github.workspace }}:/workspace -w /workspace -e GCP_PROJECT_ID=dummy-project -e GCP_PUBSUB_TOPIC=dummy-topic
           run: |
+            # Create a dummy credentials file so the schema check passes
+            mkdir -p /etc/vector
+            touch /etc/vector/gcp-key.json
             vector validate ./honeypot/control/vector.toml
 
       # Validate Docker Compose syntax
