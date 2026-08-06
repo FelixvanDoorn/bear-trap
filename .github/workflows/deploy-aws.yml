@@ -45,7 +45,7 @@ jobs:
           docker compose config --quiet
 
   # ============================================================================
-  # STAGE 2: Automated Deployment across Multi-Cloud Fleet
+  # STAGE 2: Automated Deployment
   # ============================================================================
   deploy:
     name: Deploy Honeypot Node to AWS

@@ -69,3 +69,16 @@ jobs:
           if [ -d "honey-pot/agent-sensor/tests" ]; then
             pytest honeypot/agent-sensor/tests
           fi
+
+  # ============================================================================
+  # STAGE 2: Automated Deployment
+  # ============================================================================
+  deploy:
+    name: Deploy Honeypot Node to Azure
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+       - name: Checkout Code
+         uses: actions/checkout@v4
