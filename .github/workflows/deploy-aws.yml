@@ -47,15 +47,15 @@ jobs:
   # ============================================================================
   # STAGE 2: Automated Deployment across Multi-Cloud Fleet
   # ============================================================================
-  # deploy:
-  #   name: Deploy to Edge Sensors (AWS & Azure)
-  #   needs: validate
-  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  #   runs-on: ubuntu-latest
+  deploy:
+    name: Deploy Honeypot Node to AWS
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
 
-  #   steps:
-  #     - name: Checkout Code
-  #       uses: actions/checkout@v4
+    steps:
+       - name: Checkout Code
+         uses: actions/checkout@v4
 
   #     - name: Set up Python for Ansible
   #       uses: actions/setup-python@v5
