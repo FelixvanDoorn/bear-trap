@@ -31,14 +31,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: timberio/vector:0.38.X-debian
-          options: >-
-            -v ${{ github.workspace }}:/workspace
-            -w /workspace
-            -e project=dummy-project
-            -e gcp_pub=dummy-topic
-            -e CLOUD_PROVIDER="ci-test"
-            -e NODE_ROLE="ci-validator"
-            -e SENSOR_REGION="ci-region"
+          options: -v ${{ github.workspace }}:/workspace -w /workspace
           run: |
             vector validate ./honeypot/agent-sensor/vector.toml
 
