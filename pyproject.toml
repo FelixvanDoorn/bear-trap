@@ -8,8 +8,29 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
-[tool.uv]
-dev-dependencies = [
+# Dependency Group specifically for testing
+[dependency-groups]
+dev = [
     "pre-commit>=4.6.0",
     "ruff>=0.15.20",
 ]
+
+test = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "cowrie>=2.5.0",
+    "twisted>=24.3.0",
+    "pyyaml>=6.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["honeypot/agent-sensor"]
+testpaths = ["honeypot/agent-sensor/tests"]
