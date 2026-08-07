@@ -24,10 +24,10 @@ source = """
 # Step 1: Parse the incoming raw JSON string from Cowrie
 parsed, err = parse_json(.message)
 if err != null {
-  .error = "Telemetry processing exception: unable to parse internal log structure."
+  log("Failed to parse JSON message: " + string!(err), level: "error")
 } else {
   # Merge parsed fields to the root object and remove the duplicate raw text
-  ., err = merge(., parsed)
+  . = merge!(., parsed)
   del(.message)
 }
 

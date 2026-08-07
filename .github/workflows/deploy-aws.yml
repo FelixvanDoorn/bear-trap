@@ -35,7 +35,14 @@ jobs:
           run: |
             # Create a dummy credentials file so the schema check passes
             mkdir -p /etc/vector
-            touch /etc/vector/gcp-key.json
+            cat << 'EOF' > /etc/vector/gcp-key.json
+            {
+              "type": "service_account",
+              "project_id": "ci-dummy-project",
+              "private_key_id": "dummy",
+              "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n",
+              "client_email": "ci-dummy@ci-dummy-project.iam.gserviceaccount.com"
+            }
             vector validate ./honeypot/control/vector.toml
 
       # Validate Docker Compose syntax
