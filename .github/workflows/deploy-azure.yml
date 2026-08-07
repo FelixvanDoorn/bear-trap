@@ -48,7 +48,7 @@ jobs:
       # Validate Docker Compose syntax
       - name: Validate Docker Compose Spec
         run: |
-          cd agent-sensor
+          cd honeypot/agent-sensor
           docker compose config --quiet
 
       # Our agent-sensor node has some additional python scripts.

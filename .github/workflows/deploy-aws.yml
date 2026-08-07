@@ -9,8 +9,13 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'honeypcontrol/**'
+      - 'honeypot/control/**'
       - '.github/workflows/deploy-aws.yml'
+
+permissions:
+  # REQUIRED for AWS OIDC authentication
+  id-token: write
+  contents: read
 
 jobs:
   # ============================================================================
@@ -64,16 +69,43 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::808198485584:role/BearTrap-Control-Node-GitHubActions-EC2-Deployer
+          aws-region: eu-north-1
+
+      - name: Get Runner IP
+        id: ip
+        run: echo "runner_ip=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
+
+      - name: Authorize Security Group Ingress
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id sg-0217be33d7918a365 \
+            --protocol tcp \
+            --port 22222 \
+            --cidr ${{ steps.ip.outputs.runner_ip }}/32
+
       - name: Set up SSH Key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Add EC2 Host Key to known_hosts
+      - name: Deploy through SSH
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p 22222 16.16.156.14 >> ~/.ssh/known_hosts
-
-      - name: Test Connection or Deploy
-        run: |
+          chmod 600 ~/.ssh/known_hosts
           ssh -p 22222 ubuntu@16.16.156.14 "docker ps"
+
+      - name: Revoke Security Group Ingress
+        if: always()
+        run: |
+          if [ -n "${{ steps.ip.outputs.runner_ip }}" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --group-id sg-0217be33d7918a365 \
+              --protocol tcp \
+              --port 22222 \
+              --cidr ${{ steps.ip.outputs.runner_ip }}/32
+          fi
