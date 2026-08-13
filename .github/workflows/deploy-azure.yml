@@ -12,6 +12,11 @@ on:
       - 'honeypot/agent-sensor/**'
       - '.github/workflows/deploy-azure.yml'
 
+permissions:
+  # REQUIRED for Azure OIDC authentication
+  id-token: write
+  contents: read
+
 jobs:
   # ============================================================================
   # STAGE 1: CI & Config Validation
@@ -89,5 +94,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-       - name: Checkout Code
-         uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # TODO: replace with the real App Registration / Managed Identity IDs once
+      # the federated credential trusting this repo/branch has been created.
+      - name: Configure Azure Credentials via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: 'ce303bb3-ee5e-4b65-a652-55a048e597b4'
+          tenant-id: '298b7d65-5cda-4042-87f0-9a32a8bec63e'
+          subscription-id: '0557b42e-187b-40e7-a736-7db46bff5bc3'
+
+      - name: Get Runner IP
+        id: ip
+        run: echo "runner_ip=$(curl -s  https://ifconfig.me)" >> $GITHUB_OUTPUT
+
+      # TODO: replace with the real resource group / NSG name once the Azure VM exists.
+      - name: Authorize NSG Ingress
+        run: |
+          az network nsg rule create \
+            --resource-group bear-trap-agent-node \
+            --nsg-name bear-trap-agent-node-nsg \
+            --name github-runner-temp \
+            --priority 100 \
+            --access Allow \
+            --direction Inbound \
+            --protocol Tcp \
+            --destination-port-ranges 2222 \
+            --source-address-prefixes ${{ steps.ip.outputs.runner_ip }}/32
+
+      - name: Set up SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.AZURE_VM_SSH_KEY }}
+
+      # TODO: replace with the real VM public IP once it exists.
+      - name: Deploy through SSH
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p 2222 20.106.204.124 >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh -p 2222 azureuser@20.106.204.124 "docker ps"
+
+      - name: Revoke NSG Ingress
+        if: always()
+        run: |
+          az network nsg rule delete \
+            --resource-group bear-trap-agent-node \
+            --nsg-name bear-trap-agent-node-nsg \
+            --name github-runner-temp

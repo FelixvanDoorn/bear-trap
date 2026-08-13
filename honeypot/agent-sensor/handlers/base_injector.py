@@ -11,10 +11,10 @@ PROMPT_FILE = Path(__file__).parent / "prompt.txt"
 
 class command_dynamic_handler(HoneyPotCommand):
     # Default mock output if not overridden dynamically by __init__.py
-    mock_output = None
+    mock_output: str | None = None
     # Module-level registry to store previously created dynamic class types
 
-    def log_to_vector(self, cmd_name: str, action_status="intercepted") -> None:
+    def log_to_vector(self, cmd_name: str, action_status: str = "intercepted") -> None:
         """
         Emits clean telemetry payload using Cowrie's native logger.
         Vector ingests this directly from /var/log/cowrie/cowrie.json
