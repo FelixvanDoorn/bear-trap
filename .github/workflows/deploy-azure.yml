@@ -108,7 +108,7 @@ jobs:
 
       - name: Get Runner IP
         id: ip
-        run: echo "runner_ip=$(curl -s  https://ifconfig.me)" >> $GITHUB_OUTPUT
+        run: echo "runner_ip=$(curl -s https://ifconfig.me)" >> $GITHUB_OUTPUT
 
       # TODO: replace with the real resource group / NSG name once the Azure VM exists.
       - name: Authorize NSG Ingress
@@ -121,7 +121,7 @@ jobs:
             --access Allow \
             --direction Inbound \
             --protocol Tcp \
-            --destination-port-ranges 2222 \
+            --destination-port-ranges 22222 \
             --source-address-prefixes ${{ steps.ip.outputs.runner_ip }}/32
 
       - name: Set up SSH Key
@@ -133,9 +133,9 @@ jobs:
       - name: Deploy through SSH
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -p 2222 20.106.204.124 >> ~/.ssh/known_hosts
+          ssh-keyscan -p 22222 20.106.204.124 >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          ssh -p 2222 azureuser@20.106.204.124 "docker ps"
+          ssh -p 22222 azureuser@20.106.204.124 "docker ps"
 
       - name: Revoke NSG Ingress
         if: always()
