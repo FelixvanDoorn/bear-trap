@@ -99,7 +99,7 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
           ssh -p 22222 ubuntu@16.16.156.14 "
             if [ -d ~/bear-trap/.git ]; then
-              git -C ~/bear-trap pull
+              git -C ~/bear-trap fetch origin main && git -C ~/bear-trap reset --hard origin/main
             else
               git clone https://github.com/FelixvanDoorn/bear-trap.git ~/bear-trap
             fi
