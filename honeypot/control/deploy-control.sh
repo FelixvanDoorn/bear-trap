@@ -24,7 +24,11 @@ echo -e "${GREEN}===============================================================
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$REPO_ROOT" ]; then
     echo -e "${YELLOW}[*] Pulling latest changes...${NC}"
-    git -C "$REPO_ROOT" pull
+    # This host should always exactly mirror origin/main -- a plain `pull`
+    # refuses to run if anything here was ever hand-edited (e.g. during
+    # debugging via scp), so reset hard instead of merging.
+    git -C "$REPO_ROOT" fetch origin main
+    git -C "$REPO_ROOT" reset --hard origin/main
 fi
 
 # ------------------------------------------------------------------------------
