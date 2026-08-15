@@ -110,14 +110,18 @@ jobs:
         id: ip
         run: echo "runner_ip=$(curl -s https://ifconfig.me)" >> $GITHUB_OUTPUT
 
-      # Pinned to a release known to bundle Python 3.13 -- azure-cli builds from
-      # ~2.67.0 onward pick up a Python 3.14 interpreter that deadlocks under
-      # az-cli's threaded module/credential loading (Azure/azure-cli#32980, #32869,
-      # still open as of writing). Revisit once that's fixed upstream.
+      # azure/CLI@v2 runs entirely inside a container (mcr.microsoft.com/azure-cli),
+      # separate from whatever az-cli is preinstalled on the runner -- so it never
+      # hits the Python 3.14 deadlock in az-cli's own bundled install
+      # (Azure/azure-cli#32980, #32869) regardless of the version pinned here.
+      # Track `latest` rather than a fixed old version: pinning to something older
+      # than what azure/login@v2 uses causes an MSAL session-cache pickle mismatch
+      # ("Can't get attribute 'NormalizedResponse'...") between the login step and
+      # this one -- staying close to current avoids that version skew.
       - name: Authorize NSG Ingress
         uses: azure/CLI@v2
         with:
-          azcliversion: 2.66.0
+          azcliversion: latest
           inlineScript: |
             az network nsg rule create \
               --resource-group bear-trap-agent-node \
@@ -155,7 +159,7 @@ jobs:
         if: always()
         uses: azure/CLI@v2
         with:
-          azcliversion: 2.66.0
+          azcliversion: latest
           inlineScript: |
             az network nsg rule delete \
               --resource-group bear-trap-agent-node \
