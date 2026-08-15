@@ -24,23 +24,35 @@ services:
           cpus: '0.50'
           memory: 512M
     # -----------------------------------------------------------------
+    # Cowrie's process actually runs from /cowrie/cowrie-git (its CWD,
+    # confirmed via /proc/1/cwd on a running container) -- NOT
+    # /home/cowrie/cowrie. That's also where the real, importable
+    # cowrie.commands package lives (cowrie.commands.__path__ resolves to
+    # /cowrie/cowrie-git/src/cowrie/commands). Everything below was
+    # previously mounted under /home/cowrie/cowrie, which Cowrie never
+    # reads -- meaning the prompt-injection command layer has never
+    # actually loaded in any prior deploy.
     volumes:
-      # Mount your customized configs for the agent shell
-      - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
-      - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
+      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
 
       # Active python command injection files & config
-      - ./agent-sensor/commands.yaml:/home/cowrie/cowrie/src/cowrie/commands/commands.yaml:ro
-      - ./agent-sensor/__init__.py:/home/cowrie/cowrie/src/cowrie/commands/__init__.py:ro
-      - ./agent-sensor/base_injector.py:/home/cowrie/cowrie/src/cowrie/commands/base_injector.py:ro
+      - ./handlers/commands.yaml:/cowrie/cowrie-git/src/cowrie/commands/commands.yaml:ro
+      - ./handlers/__init__.py:/cowrie/cowrie-git/src/cowrie/commands/__init__.py:ro
+      - ./handlers/base_injector.py:/cowrie/cowrie-git/src/cowrie/commands/base_injector.py:ro
+      - ./handlers/injected_commands.py:/cowrie/cowrie-git/src/cowrie/commands/injected_commands.py:ro
+      - ./handlers/prompt.txt:/cowrie/cowrie-git/src/cowrie/commands/prompt.txt:ro
 
-
-      # Passive text files (Overrides Cowrie's internal virtual filesystem)
+      # NOTE: this Cowrie version is pickle-backed (fs.pickle), not driven by
+      # a raw honeyfs directory -- see src/cowrie/shell/honeyfs.py. This mount
+      # is currently a no-op regardless of path; overriding filesystem
+      # contents would mean regenerating fs.pickle instead. Left mounted at
+      # its original path since fixing it is a separate, bigger task.
       - ./honeyfs:/home/cowrie/cowrie/honeyfs:ro
 
       # Share detector-specific logs out to Vector
-      - detector_logs:/home/cowrie/cowrie/var/log/cowrie
-      - detector_downloads:/home/cowrie/cowrie/var/lib/cowrie/downloads
+      - detector_logs:/cowrie/cowrie-git/var/log/cowrie
+      - detector_downloads:/cowrie/cowrie-git/var/lib/cowrie/downloads
 
     networks:
       - agent_detector_net
@@ -50,6 +62,10 @@ services:
     image: timberio/vector:latest-alpine
     container_name: azure_vector_shipper
     restart: always
+    # The image's entrypoint defaults to /etc/vector/vector.yaml when no
+    # --config is given -- without this it silently crash-loops looking for
+    # a file we never mount.
+    command: ["--config", "/etc/vector/vector.toml"]
     volumes:
       - ./vector.toml:/etc/vector/vector.toml:ro
        # Read-only for security
@@ -59,8 +75,7 @@ services:
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
-      # Re-use the exact same GCP token injection logic from the AWS node script
-      - GOOGLE_APPLICATION_CREDENTIALS_DATA=${GOOGLE_APPLICATION_CREDENTIALS_DATA}
+      - GOOGLE_APPLICATION_CREDENTIALS=/etc/vector/gcp_key.json
     depends_on:
       - cowrie_detector
     networks:

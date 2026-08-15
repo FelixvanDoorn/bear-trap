@@ -24,13 +24,18 @@ services:
           cpus: '0.50'          # Prevents attackers from using your CPU to mine crypto
           memory: 512M          # Prevents Denial of Service (DoS) memory exhaustion attacks
     # ----------------------------
+    # Cowrie's process actually runs from /cowrie/cowrie-git (that's its CWD,
+    # confirmed via /proc/1/cwd on a running container) -- NOT
+    # /home/cowrie/cowrie. Every relative path in cowrie.cfg.dist (etc_path,
+    # log_path, download_path) resolves against that CWD. Mounting anything
+    # under /home/cowrie/cowrie is silently ignored: Docker just creates an
+    # empty directory tree there and Cowrie never looks at it, which is why
+    # this config/userdb were never actually loaded in any prior deploy.
     volumes:
-      # Mount configuration files to the correct home directory paths
-      - ./cowrie.cfg:/home/cowrie/cowrie/etc/cowrie.cfg:ro
-      - ./userdb.txt:/home/cowrie/cowrie/etc/userdb.txt:ro
-      # Share logs out via the named volume
-      - shell_logs:/home/cowrie/cowrie/var/log/cowrie
-      - shell_downloads:/home/cowrie/cowrie/var/lib/cowrie/downloads
+      - ./cowrie.cfg:/cowrie/cowrie-git/etc/cowrie.cfg:ro
+      - ./userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
+      - shell_logs:/cowrie/cowrie-git/var/log/cowrie
+      - shell_downloads:/cowrie/cowrie-git/var/lib/cowrie/downloads
 
     networks:
       - frontend_net
@@ -40,17 +45,20 @@ services:
     image: timberio/vector:latest-alpine
     container_name: aws_vector_shipper
     restart: always
+    # The image's entrypoint defaults to /etc/vector/vector.yaml when no
+    # --config is given -- without this it silently crash-loops looking for
+    # a file we never mount.
+    command: ["--config", "/etc/vector/vector.toml"]
     volumes:
       # Vector reads configuration and parses shared logs from the shell
       - ./vector.toml:/etc/vector/vector.toml:ro
       # Read-only access for safety
       - shell_logs:/var/log/cowrie:ro
-      - ./gcp-key.json:/etc/vector/gcp-key.json:ro
+      - ./gcp_key.json:/etc/vector/gcp_key.json:ro
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_PUBSUB_TOPIC=${GCP_PUBSUB_TOPIC}
-      # Docker pulls this from your .env file and injects it into Vector
-      - GOOGLE_APPLICATION_CREDENTIALS=/etc/vector/gcp-key.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/etc/vector/gcp_key.json
     depends_on:
       - cowrie_shell
     networks:

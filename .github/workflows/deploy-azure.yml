@@ -40,7 +40,7 @@ jobs:
           run: |
             # Create a dummy credentials file so the schema check passes
             mkdir -p /etc/vector
-            cat << 'EOF' > /etc/vector/gcp-key.json
+            cat << 'EOF' > /etc/vector/gcp_key.json
             {
               "type": "service_account",
               "project_id": "ci-dummy-project",
@@ -110,37 +110,54 @@ jobs:
         id: ip
         run: echo "runner_ip=$(curl -s https://ifconfig.me)" >> $GITHUB_OUTPUT
 
-      # TODO: replace with the real resource group / NSG name once the Azure VM exists.
+      # Pinned to a release known to bundle Python 3.13 -- azure-cli builds from
+      # ~2.67.0 onward pick up a Python 3.14 interpreter that deadlocks under
+      # az-cli's threaded module/credential loading (Azure/azure-cli#32980, #32869,
+      # still open as of writing). Revisit once that's fixed upstream.
       - name: Authorize NSG Ingress
-        run: |
-          az network nsg rule create \
-            --resource-group bear-trap-agent-node \
-            --nsg-name bear-trap-agent-node-nsg \
-            --name github-runner-temp \
-            --priority 100 \
-            --access Allow \
-            --direction Inbound \
-            --protocol Tcp \
-            --destination-port-ranges 22222 \
-            --source-address-prefixes ${{ steps.ip.outputs.runner_ip }}/32
+        uses: azure/CLI@v2
+        with:
+          azcliversion: 2.66.2
+          inlineScript: |
+            az network nsg rule create \
+              --resource-group bear-trap-agent-node \
+              --nsg-name bear-trap-agent-node-nsg \
+              --name github-runner-temp \
+              --priority 100 \
+              --access Allow \
+              --direction Inbound \
+              --protocol Tcp \
+              --destination-port-ranges 22222 \
+              --source-address-prefixes ${{ steps.ip.outputs.runner_ip }}/32
 
       - name: Set up SSH Key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.AZURE_VM_SSH_KEY }}
 
-      # TODO: replace with the real VM public IP once it exists.
       - name: Deploy through SSH
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p 22222 20.106.204.124 >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          ssh -p 22222 azureuser@20.106.204.124 "docker ps"
+          ssh -p 22222 azureuser@20.106.204.124 "
+            if [ -d ~/bear-trap/.git ]; then
+              git -C ~/bear-trap pull
+            else
+              git clone https://github.com/FelixvanDoorn/bear-trap.git ~/bear-trap
+            fi
+            cd ~/bear-trap/honeypot/agent-sensor
+            chmod +x deploy-agent.sh
+            ./deploy-agent.sh
+          "
 
       - name: Revoke NSG Ingress
         if: always()
-        run: |
-          az network nsg rule delete \
-            --resource-group bear-trap-agent-node \
-            --nsg-name bear-trap-agent-node-nsg \
-            --name github-runner-temp
+        uses: azure/CLI@v2
+        with:
+          azcliversion: 2.66.2
+          inlineScript: |
+            az network nsg rule delete \
+              --resource-group bear-trap-agent-node \
+              --nsg-name bear-trap-agent-node-nsg \
+              --name github-runner-temp

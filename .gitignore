@@ -61,5 +61,6 @@ data/fs.pickle
 *.p12
 *.pfx
 *.asc
+gcp_key.json
 .env
 .env.*

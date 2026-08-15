@@ -45,10 +45,22 @@ del(.source_type)
 [sinks.gcp_pubsub_sink]
 type = "gcp_pubsub"
 inputs = ["parse_and_enrich"]
-project = "${GCP_PROJECT_ID}"
-topic = "${GCP_PUBSUB_TOPIC}"
+# Vector 0.57+ disables ${VAR} interpolation by default (security hardening);
+# fixing it via --dangerously-allow-env-var-interpolation would be the wrong
+# tradeoff for values that aren't secrets anyway -- hardcoded like everywhere
+# else in this project (deploy-control.sh, deploy-agent.sh).
+project = "mineral-droplet-160709"
+topic = "bear-trap-honeypot-logs"
 # Credentials path pointing to the mounted key inside the container
-credentials_path = "/etc/vector/gcp-key.json"
+credentials_path = "/etc/vector/gcp_key.json"
+
+# The service account is intentionally scoped to publisher-only (least
+# privilege). Vector's healthcheck does a GET on the topic, which needs
+# pubsub.topics.get -- a permission publisher doesn't grant. Actual
+# publishing only needs pubsub.topics.publish, which works fine, so disable
+# the healthcheck rather than widen the service account's IAM role.
+[sinks.gcp_pubsub_sink.healthcheck]
+enabled = false
 
 # Encoding configuration ensuring flawless JSON delivery to Pub/Sub
 [sinks.gcp_pubsub_sink.encoding]

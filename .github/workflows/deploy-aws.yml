@@ -40,7 +40,7 @@ jobs:
           run: |
             # Create a dummy credentials file so the schema check passes
             mkdir -p /etc/vector
-            cat << 'EOF' > /etc/vector/gcp-key.json
+            cat << 'EOF' > /etc/vector/gcp_key.json
             {
               "type": "service_account",
               "project_id": "ci-dummy-project",
@@ -97,7 +97,16 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p 22222 16.16.156.14 >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          ssh -p 22222 ubuntu@16.16.156.14 "docker ps"
+          ssh -p 22222 ubuntu@16.16.156.14 "
+            if [ -d ~/bear-trap/.git ]; then
+              git -C ~/bear-trap pull
+            else
+              git clone https://github.com/FelixvanDoorn/bear-trap.git ~/bear-trap
+            fi
+            cd ~/bear-trap/honeypot/control
+            chmod +x deploy-control.sh
+            ./deploy-control.sh
+          "
 
       - name: Revoke Security Group Ingress
         if: always()

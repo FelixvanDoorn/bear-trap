@@ -15,7 +15,7 @@ GCP_PROJECT_ID="mineral-droplet-160709"
 GCP_PUBSUB_TOPIC="bear-trap-honeypot-logs"
 
 echo -e "${GREEN}======================================================================${NC}"
-echo -e "${GREEN}    Cowrie & Vector AWS Control Node Orchestration Engine             ${NC}"
+echo -e "${GREEN}    Cowrie & Vector Azure Agent-Sensor Node Orchestration Engine       ${NC}"
 echo -e "${GREEN}======================================================================${NC}"
 
 # ------------------------------------------------------------------------------
@@ -30,21 +30,22 @@ fi
 # ------------------------------------------------------------------------------
 # PHASE 1: CLOUD ENVIRONMENT VALIDATION
 # ------------------------------------------------------------------------------
-echo -e "${YELLOW}[*] Validating cloud execution environment via IMDSv2...${NC}"
-TOKEN=$(curl -s -S -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" --max-time 2 || true)
+echo -e "${YELLOW}[*] Validating cloud execution environment via Azure IMDS...${NC}"
+METADATA=$(curl -s -H "Metadata:true" --max-time 2 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" || true)
 
-if [ -z "$TOKEN" ]; then
-    echo -e "${RED}❌ CRITICAL CONFIGURATION FAULT: AWS Metadata Service unreachable.${NC}"
-    echo -e "${RED}This script must be executed exclusively inside an AWS EC2 instance. Terminating.${NC}"
+if [ -z "$METADATA" ]; then
+    echo -e "${RED}❌ CRITICAL CONFIGURATION FAULT: Azure Metadata Service unreachable.${NC}"
+    echo -e "${RED}This script must be executed exclusively inside an Azure VM. Terminating.${NC}"
     exit 1
 fi
 
-AWS_INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-AWS_PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+AZURE_VM_NAME=$(echo "$METADATA" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)
+AZURE_PUBLIC_IP=$(curl -s -H "Metadata:true" --max-time 2 "http://169.254.169.254/metadata/instance/network?api-version=2021-02-01" \
+    | grep -o '"publicIpAddress":"[^"]*"' | head -1 | cut -d'"' -f4)
 
-echo -e "${GREEN}✔ AWS Cloud Environment Validated.${NC}"
-echo -e "   Instance ID: ${GREEN}$AWS_INSTANCE_ID${NC}"
-echo -e "   Public IP:   ${GREEN}$AWS_PUBLIC_IP${NC}\n"
+echo -e "${GREEN}✔ Azure Cloud Environment Validated.${NC}"
+echo -e "   VM Name:     ${GREEN}$AZURE_VM_NAME${NC}"
+echo -e "   Public IP:   ${GREEN}$AZURE_PUBLIC_IP${NC}\n"
 
 # ------------------------------------------------------------------------------
 # PHASE 2: .ENV PROVISIONING (only what Docker Compose actually reads)
@@ -53,7 +54,7 @@ if [ ! -f .env ]; then
     echo -e "${YELLOW}[*] Writing local environment profile (.env)...${NC}"
     cat << EOF > .env
 # ==============================================================================
-# Automated AWS Control Node Environment Variables (Local Deployment Only)
+# Automated Azure Agent-Sensor Node Environment Variables (Local Deployment Only)
 # Compiled on: $(date -u)
 # ==============================================================================
 GCP_PROJECT_ID='$GCP_PROJECT_ID'
@@ -107,9 +108,14 @@ if [ -f userdb.txt ]; then
     chmod 644 userdb.txt
 fi
 
-# Secure Vector's configuration specifically to avoid ownership conflicts
 if [ -f vector.toml ]; then
     chmod 664 vector.toml
+fi
+
+# Custom Cowrie command-injection layer -- must stay world-readable so the
+# container's non-root cowrie user can load it.
+if [ -d handlers ]; then
+    chmod 644 handlers/*.py handlers/*.yaml handlers/*.txt 2>/dev/null || true
 fi
 
 # The GCP service account key is provisioned out-of-band (copied onto this host
@@ -125,13 +131,30 @@ chmod 600 gcp_key.json
 # Refresh engine cache maps and boot the architecture.
 # --force-recreate matters here: `up -d` alone won't recreate a running
 # container just because a bind-mounted host file (cowrie.cfg, userdb.txt,
-# vector.toml) changed -- Compose only reacts to changes it tracks itself.
+# vector.toml, handlers/*) changed -- Compose only reacts to changes it tracks itself.
 sudo docker compose pull
 sudo docker compose up -d --force-recreate
 
+# ------------------------------------------------------------------------------
+# PHASE 5: RUNTIME SMOKE CHECK
+# ------------------------------------------------------------------------------
+# The pytest/ruff CI validation exercises base_injector.py in isolation, not
+# inside Cowrie's own interpreter -- this catches load-time failures (bad
+# commands.yaml, import errors in the mounted handler files) that would
+# otherwise only surface the first time an attacker actually hits the honeypot.
+echo -e "${YELLOW}[*] Waiting for cowrie_detector to settle, then checking for startup errors...${NC}"
+sleep 5
+if sudo docker compose logs cowrie_detector --tail 100 | grep -iq "traceback"; then
+    echo -e "${RED}⚠ Traceback detected in cowrie_detector startup logs -- check the custom command handlers.${NC}"
+    sudo docker compose logs cowrie_detector --tail 100 | grep -i -A 20 "traceback"
+    exit 1
+else
+    echo -e "${GREEN}✔ No startup tracebacks detected.${NC}"
+fi
+
 echo -e "\n${GREEN}======================================================================${NC}"
 echo -e "${GREEN}🚀 DEPLOYMENT COMPLETED SUCCESSFULLY!${NC}"
-echo -e "   Control Node IP:     ${YELLOW}$AWS_PUBLIC_IP${NC}"
-echo -e "   Target GCP Sink ID:  ${YELLOW}$GCP_PROJECT_ID${NC}"
-echo -e "   GCP Ingest Topic:    ${YELLOW}$GCP_PUBSUB_TOPIC${NC}"
+echo -e "   Agent-Sensor Node IP: ${YELLOW}$AZURE_PUBLIC_IP${NC}"
+echo -e "   Target GCP Sink ID:   ${YELLOW}$GCP_PROJECT_ID${NC}"
+echo -e "   GCP Ingest Topic:     ${YELLOW}$GCP_PUBSUB_TOPIC${NC}"
 echo -e "${GREEN}======================================================================${NC}"
