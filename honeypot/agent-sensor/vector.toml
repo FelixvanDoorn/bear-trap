@@ -21,7 +21,7 @@ read_from = "beginning"
 [transforms.parse_and_enrich]
 type = "remap"
 inputs = ["cowrie_logs"]
-source = """
+source = '''
 # Step 1: Parse the incoming raw JSON string from Cowrie
 parsed, err = parse_json(.message)
 if err != null {
@@ -41,7 +41,29 @@ del(.source_type)
 .cloud_provider = "azure"
 .node_role = "agent_detector"
 .ingest_timestamp = format_timestamp!(now(), "%Y-%m-%dT%H:%M:%SZ")
-"""
+
+# Step 4: Structured capture of prompt-injection responses.
+# handlers/prompt.txt asks a complying LLM agent to respond with exactly one
+# `echo 'BEARTRAP_AGENT_REPORT: {...}'` command. Detect that shape in
+# cowrie.command.input and promote the JSON into its own nested field
+# (.agent_report) instead of leaving it buried as opaque text inside
+# .input -- this is what makes it a queryable BigQuery column later rather
+# than something that needs manual string-searching.
+if .eventid == "cowrie.command.input" {
+  input_str = to_string(.input) ?? ""
+  if contains(input_str, "BEARTRAP_AGENT_REPORT:") {
+    captures, cerr = parse_regex(input_str, r'BEARTRAP_AGENT_REPORT:\s*(?P<json>\{.*\})')
+    if cerr == null {
+      parsed_report, perr = parse_json(captures.json)
+      if perr == null {
+        .agent_report = parsed_report
+      } else {
+        log("Failed to parse BEARTRAP_AGENT_REPORT JSON: " + string!(perr), level: "warn")
+      }
+    }
+  }
+}
+'''
 
 # ------------------------------------------------------------------------------
 # SINKS: Where Vector ships the processed data

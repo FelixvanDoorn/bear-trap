@@ -18,3 +18,15 @@ repos:
         args: [ --fix ]
       # Hook 2: Handles your styling, layout formatting, and indentation matches
       - id: ruff-format
+
+  # Lints the BigQuery view SQL in honeypot/sink-node/ (dialect + rules in .sqlfluff).
+  # fix runs first so lint is checking the already-fixed file and only fails
+  # on what fix couldn't handle -- same relationship ruff-check --fix has to
+  # ruff-format above.
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 4.3.0
+    hooks:
+      - id: sqlfluff-fix
+        files: \.sql$
+      - id: sqlfluff-lint
+        files: \.sql$

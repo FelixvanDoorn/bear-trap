@@ -1,0 +1,11 @@
+[sqlfluff]
+dialect = bigquery
+templater = raw
+max_line_length = 100
+# ST06 (simple columns before calculations) doesn't fit a view where every
+# column is a JSON_VALUE extraction, deliberately grouped by category with
+# comments rather than by "simple vs computed".
+exclude_rules = ST06
+
+[sqlfluff:indentation]
+tab_space_size = 2

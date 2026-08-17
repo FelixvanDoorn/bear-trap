@@ -12,6 +12,11 @@ on:
       - 'honeypot/sink-node/**'
       - '.github/workflows/deploy-gcp.yml'
 
+permissions:
+  # REQUIRED for GCP Workload Identity Federation
+  id-token: write
+  contents: read
+
 jobs:
   # ============================================================================
   # STAGE 1: CI & Config Validation
@@ -23,3 +28,53 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      # deploy-sink.sh itself is idempotent (every step checks before
+      # creating, the view is CREATE OR REPLACE) -- proven safe to re-run
+      # through repeated manual execution, same bar the AWS/Azure redeploy
+      # steps had to clear before those got wired into CI. This stage just
+      # checks the script/SQL are well-formed before the deploy job runs it
+      # for real against GCP.
+      - name: Syntax-check deploy-sink.sh
+        run: |
+          bash -n honeypot/sink-node/deploy-sink.sh
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install deps needed for linting
+        run: |
+          uv sync --group dev
+
+      - name: Lint BigQuery SQL with sqlfluff
+        run: |
+          uv run sqlfluff lint honeypot/sink-node/*.sql
+
+  # ============================================================================
+  # STAGE 2: Automated Deployment
+  # ============================================================================
+  deploy:
+    name: Deploy GCP Sink (BigQuery + Pub/Sub)
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure GCP Credentials via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/549783972519/locations/global/workloadIdentityPools/bear-trap-github-pool/providers/bear-trap-github-provider
+          service_account: bear-trap-gcp-ci@mineral-droplet-160709.iam.gserviceaccount.com
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy GCP Sink
+        run: |
+          chmod +x honeypot/sink-node/deploy-sink.sh
+          ./honeypot/sink-node/deploy-sink.sh
