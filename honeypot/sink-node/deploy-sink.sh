@@ -14,6 +14,11 @@ YELLOW='\033[1;33m'
 NC='\033[0;37m'
 
 PROJECT_ID="mineral-droplet-160709"
+# Fixed for this project, not secret -- hardcoded rather than looked up via
+# `gcloud projects describe` so this script doesn't need
+# resourcemanager.projects.get / Cloud Resource Manager API enabled, which
+# the CI service account intentionally doesn't have (least privilege).
+PROJECT_NUMBER="549783972519"
 TOPIC="bear-trap-honeypot-logs"
 DATASET="bear_trap_logs"
 TABLE="raw_events"
@@ -66,7 +71,6 @@ fi
 # ------------------------------------------------------------------------------
 # IAM: let the Pub/Sub service agent write into the dataset
 # ------------------------------------------------------------------------------
-PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 PUBSUB_SA="service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
 echo -e "${YELLOW}[*] Granting write access on ${DATASET} to ${PUBSUB_SA}...${NC}"
 # `bq add-iam-policy-binding` on a dataset requires allowlisting we don't
