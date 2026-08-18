@@ -80,11 +80,13 @@ echo -e "${YELLOW}[*] Granting write access on ${DATASET} to ${PUBSUB_SA}...${NC
 #
 # Fetch once and reuse, both to avoid a redundant second `bq show` call and
 # so a failure here gives a real diagnostic instead of an opaque Python
-# JSONDecodeError. --headless suppresses bq's interactive-session behavior
-# (informational prompts/banners it otherwise prints on non-TTY stdout in
-# some CI environments), which is what caused this to intermittently
-# capture non-JSON noise instead of the dataset metadata.
-DATASET_JSON="$(bq --headless show --format=prettyjson "${PROJECT_ID}:${DATASET}" 2>/dev/null)"
+# JSONDecodeError. When authenticated via Workload Identity Federation, bq
+# prints "WARNING: --scopes flag may not work as expected... account type
+# external_account" to STDOUT (not stderr, so 2>/dev/null doesn't touch
+# it) ahead of the actual JSON -- strip anything before the first `{` to
+# stay robust to this and any similar future noise, rather than matching
+# this one specific warning string.
+DATASET_JSON="$(bq --headless show --format=prettyjson "${PROJECT_ID}:${DATASET}" 2>/dev/null | sed -n '/^{/,$p')"
 case "$DATASET_JSON" in
     \{*) ;; # looks like a JSON object, proceed
     *)
