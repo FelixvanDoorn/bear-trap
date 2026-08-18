@@ -77,17 +77,29 @@ echo -e "${YELLOW}[*] Granting write access on ${DATASET} to ${PUBSUB_SA}...${NC
 # have -- use the classic dataset ACL mechanism instead (WRITER role is
 # the ACL-model equivalent of roles/bigquery.dataEditor). Idempotent: only
 # patches if the entry isn't already present.
-if bq show --format=prettyjson "${PROJECT_ID}:${DATASET}" | python3 -c "
+#
+# Fetch once and reuse, both to avoid a redundant second `bq show` call and
+# so a failure here gives a real diagnostic instead of an opaque Python
+# JSONDecodeError from piping empty output into json.load().
+DATASET_JSON="$(bq show --format=prettyjson "${PROJECT_ID}:${DATASET}" 2>/dev/null)"
+if [ -z "$DATASET_JSON" ]; then
+    echo -e "${RED}❌ 'bq show --format=prettyjson ${PROJECT_ID}:${DATASET}' returned no output.${NC}"
+    echo -e "${RED}Check the running identity has read access to this dataset.${NC}"
+    exit 1
+fi
+
+ALREADY_GRANTED="$(echo "$DATASET_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 sa = '${PUBSUB_SA}'
-found = any(a.get('userByEmail') == sa for a in d.get('access', []))
-sys.exit(0 if found else 1)
-"; then
+print('yes' if any(a.get('userByEmail') == sa for a in d.get('access', [])) else 'no')
+")"
+
+if [ "$ALREADY_GRANTED" = "yes" ]; then
     echo -e "${GREEN}✔ Access already granted.${NC}"
 else
     TMP_ACCESS="$(mktemp)"
-    bq show --format=prettyjson "${PROJECT_ID}:${DATASET}" | python3 -c "
+    echo "$DATASET_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 access = d.get('access', [])
