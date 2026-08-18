@@ -43,10 +43,10 @@ fi
 # BigQuery dataset
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}[*] Checking BigQuery dataset ${DATASET}...${NC}"
-if bq show --dataset "${PROJECT_ID}:${DATASET}" &>/dev/null; then
+if bq --headless show --dataset "${PROJECT_ID}:${DATASET}" &>/dev/null; then
     echo -e "${GREEN}✔ Dataset already exists.${NC}"
 else
-    bq mk --dataset --location=US "${PROJECT_ID}:${DATASET}"
+    bq --headless mk --dataset --location=US "${PROJECT_ID}:${DATASET}"
     echo -e "${GREEN}✔ Dataset created.${NC}"
 fi
 
@@ -60,10 +60,10 @@ fi
 # silently dropped -- there's no per-field column list to fall out of sync
 # with. Querying happens through the `logs` view instead (logs_view.sql).
 echo -e "${YELLOW}[*] Checking BigQuery table ${TABLE}...${NC}"
-if bq show "${PROJECT_ID}:${DATASET}.${TABLE}" &>/dev/null; then
+if bq --headless show "${PROJECT_ID}:${DATASET}.${TABLE}" &>/dev/null; then
     echo -e "${GREEN}✔ Table already exists.${NC}"
 else
-    bq mk --table "${PROJECT_ID}:${DATASET}.${TABLE}" \
+    bq --headless mk --table "${PROJECT_ID}:${DATASET}.${TABLE}" \
         subscription_name:STRING,message_id:STRING,publish_time:TIMESTAMP,attributes:JSON,data:JSON
     echo -e "${GREEN}✔ Table created.${NC}"
 fi
@@ -80,13 +80,20 @@ echo -e "${YELLOW}[*] Granting write access on ${DATASET} to ${PUBSUB_SA}...${NC
 #
 # Fetch once and reuse, both to avoid a redundant second `bq show` call and
 # so a failure here gives a real diagnostic instead of an opaque Python
-# JSONDecodeError from piping empty output into json.load().
-DATASET_JSON="$(bq show --format=prettyjson "${PROJECT_ID}:${DATASET}" 2>/dev/null)"
-if [ -z "$DATASET_JSON" ]; then
-    echo -e "${RED}❌ 'bq show --format=prettyjson ${PROJECT_ID}:${DATASET}' returned no output.${NC}"
-    echo -e "${RED}Check the running identity has read access to this dataset.${NC}"
-    exit 1
-fi
+# JSONDecodeError. --headless suppresses bq's interactive-session behavior
+# (informational prompts/banners it otherwise prints on non-TTY stdout in
+# some CI environments), which is what caused this to intermittently
+# capture non-JSON noise instead of the dataset metadata.
+DATASET_JSON="$(bq --headless show --format=prettyjson "${PROJECT_ID}:${DATASET}" 2>/dev/null)"
+case "$DATASET_JSON" in
+    \{*) ;; # looks like a JSON object, proceed
+    *)
+        echo -e "${RED}❌ 'bq show --format=prettyjson ${PROJECT_ID}:${DATASET}' didn't return JSON.${NC}"
+        echo -e "${RED}Raw output was:${NC}"
+        echo "$DATASET_JSON"
+        exit 1
+        ;;
+esac
 
 ALREADY_GRANTED="$(echo "$DATASET_JSON" | python3 -c "
 import json, sys
@@ -106,7 +113,7 @@ access = d.get('access', [])
 access.append({'role': 'WRITER', 'userByEmail': '${PUBSUB_SA}'})
 json.dump({'access': access}, sys.stdout, indent=2)
 " > "$TMP_ACCESS"
-    bq update --source "$TMP_ACCESS" "${PROJECT_ID}:${DATASET}"
+    bq --headless update --source "$TMP_ACCESS" "${PROJECT_ID}:${DATASET}"
     rm -f "$TMP_ACCESS"
     echo -e "${GREEN}✔ Access granted.${NC}"
 fi
@@ -136,7 +143,7 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}[*] Applying logs_view.sql...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bq query --use_legacy_sql=false < "${SCRIPT_DIR}/logs_view.sql"
+bq --headless query --use_legacy_sql=false < "${SCRIPT_DIR}/logs_view.sql"
 echo -e "${GREEN}✔ View ${VIEW} applied.${NC}"
 
 echo -e "\n${GREEN}======================================================================${NC}"
