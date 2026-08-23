@@ -14,6 +14,10 @@ dev = [
     "pre-commit>=4.6.0",
     "ruff>=0.15.20",
     "sqlfluff>=4.3.0",
+    # `uv run git nbdiff`/`nbdiff` for structured, cell-level notebook
+    # diffs -- run `uv run nbdime config-git --enable` once per clone to
+    # register it as this repo's git diff/merge driver for .ipynb files.
+    "nbdime>=4.0.0",
 ]
 
 test = [
@@ -23,6 +27,29 @@ test = [
     "twisted>=24.3.0",
     "pyyaml>=6.0",
     "ruff>=0.8.0",
+    # Duplicated from the `analysis` group (same precedent as pyyaml/ruff
+    # above being in both `dev` and `test`) so `uv sync --group test` alone
+    # is enough to run the full pytest suite, honeypot/analysis included.
+    "polars>=1.0.0",
+    "pyarrow>=17.0.0",
+    "matplotlib>=3.9.0",
+    "google-cloud-bigquery>=3.25.0",
+    # nbconvert + ipykernel: the notebook execution test needs a real
+    # working Jupyter kernel, not just the flat modules importable.
+    "nbconvert>=7.0.0",
+    "ipykernel>=6.29.0",
+]
+
+# Deps for actually running the fingerprinting pipeline/notebook (live
+# BigQuery queries, chart rendering) -- not needed by CI/tests, see `test`.
+# ipykernel registers a Jupyter kernel backed by this exact .venv, see
+# honeypot/analysis/fingerprinting/notebooks/README.md.
+analysis = [
+    "polars>=1.0.0",
+    "pyarrow>=17.0.0",
+    "matplotlib>=3.9.0",
+    "google-cloud-bigquery>=3.25.0",
+    "ipykernel>=6.29.0",
 ]
 
 [tool.ruff]
@@ -33,5 +60,5 @@ target-version = "py312"
 select = ["E", "F", "I"]
 
 [tool.pytest.ini_options]
-pythonpath = ["honeypot/agent-sensor"]
-testpaths = ["honeypot/agent-sensor/tests"]
+pythonpath = ["honeypot/agent-sensor", "honeypot/analysis/fingerprinting"]
+testpaths = ["honeypot/agent-sensor/tests", "honeypot/analysis/fingerprinting/tests"]

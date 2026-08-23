@@ -23,3 +23,4 @@ Check how you're running before starting work:
 - Code must pass `ruff check` and `pytest` before a task is considered complete — use the commands above, don't invent alternatives.
 - Use type hints wherever possible in Python code (function signatures, class attributes).
 - Follow existing codebase formatting and architectural patterns strictly.
+- **Import order**: `__future__` imports first, then standard library, then third-party, then first-party/local — each group separated by a blank line, alphabetized within its group. This is mechanically enforced by ruff's `I` (isort) rule set (already selected in `pyproject.toml`) and runs automatically via the pre-commit hook — never hand-order imports, just run `uv run ruff check --fix .`.

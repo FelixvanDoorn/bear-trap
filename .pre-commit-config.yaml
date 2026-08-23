@@ -30,3 +30,12 @@ repos:
         files: \.sql$
       - id: sqlfluff-lint
         files: \.sql$
+
+  # Strips notebook outputs (chart images, dataframe tables) before every
+  # commit, so git history only ever tracks code changes -- re-running a
+  # notebook shouldn't produce a diff. Means the committed notebook shows
+  # no rendered output on GitHub; re-run it locally to see results.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout

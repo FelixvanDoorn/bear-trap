@@ -52,6 +52,17 @@ data/fs.pickle
 *.log
 
 # ==========================================
+# Claude Code local state (task specs, local settings)
+# ==========================================
+.claude/
+
+# ==========================================
+# Analysis pipeline generated artifacts
+# ==========================================
+honeypot/analysis/fingerprinting/outputs/
+.ipynb_checkpoints/
+
+# ==========================================
 # Security keys, certificates, and secrets
 # ==========================================
 
