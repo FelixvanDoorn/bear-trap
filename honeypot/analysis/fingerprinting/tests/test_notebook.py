@@ -16,6 +16,7 @@ from pathlib import Path
 import polars as pl
 
 FINGERPRINTING_DIR = Path(__file__).parent.parent
+REPO_ROOT = FINGERPRINTING_DIR.parent.parent.parent
 NOTEBOOK_PATH = FINGERPRINTING_DIR / "notebooks" / "eda.ipynb"
 
 
@@ -29,6 +30,7 @@ def _fixture_snapshot(path: Path) -> None:
                 "sensor": "sensor-01",
                 "src_ip": "1.2.3.4",
                 "cloud_provider": "aws",
+                "protocol": "ssh",
                 "command_input": None,
                 "duration_ms": None,
                 "username": None,
@@ -43,6 +45,7 @@ def _fixture_snapshot(path: Path) -> None:
                 "sensor": "sensor-01",
                 "src_ip": "1.2.3.4",
                 "cloud_provider": "aws",
+                "protocol": "ssh",
                 "command_input": "whoami",
                 "duration_ms": None,
                 "username": None,
@@ -63,7 +66,7 @@ class TestNotebookExecutesCleanly:
         env = {
             **os.environ,
             "BEARTRAP_SNAPSHOT_DIR": str(snapshot_dir),
-            "PYTHONPATH": str(FINGERPRINTING_DIR),
+            "PYTHONPATH": str(REPO_ROOT),
         }
 
         result = subprocess.run(

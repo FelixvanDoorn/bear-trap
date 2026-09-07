@@ -4,7 +4,8 @@ from datetime import datetime
 
 import polars as pl
 import pytest
-from features import extract_session_features
+
+from honeypot.analysis.fingerprinting.features import extract_session_features
 
 
 def _event(
@@ -21,6 +22,7 @@ def _event(
     sensor: str = "sensor-01",
     src_ip: str = "1.2.3.4",
     cloud_provider: str = "aws",
+    protocol: str = "ssh",
 ) -> dict:
     return {
         "event_timestamp": datetime.fromisoformat(timestamp),
@@ -29,6 +31,7 @@ def _event(
         "sensor": sensor,
         "src_ip": src_ip,
         "cloud_provider": cloud_provider,
+        "protocol": protocol,
         "command_input": command_input,
         "duration_ms": duration_ms,
         "username": username,
@@ -480,3 +483,155 @@ class TestCommandNormalizationBeforeHashing:
         # commands stays the raw, unnormalized, un-deduped log -- only the
         # hash used for clustering is normalized.
         assert row["commands"] == ["/bin/busybox V3G4", "/bin/busybox V3G4"]
+
+
+class TestProtocolField:
+    def test_captured_from_events(self) -> None:
+        events = pl.DataFrame(
+            [
+                _event(
+                    "s1",
+                    "cowrie.session.connect",
+                    "2026-08-19T10:00:00Z",
+                    protocol="telnet",
+                )
+            ]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["protocol"] == "telnet"
+
+
+class TestTelnetOptionFingerprint:
+    def _telnet_event(
+        self,
+        session: str,
+        timestamp: str,
+        *,
+        command: str,
+        option_name: str | None = None,
+        option_byte: int | None = None,
+    ) -> dict:
+        raw: dict = {"command": command}
+        if option_name is not None:
+            raw["option_name"] = option_name
+        if option_byte is not None:
+            raw["option_byte"] = option_byte
+        return _event(
+            session,
+            "cowrie.telnet.option",
+            timestamp,
+            protocol="telnet",
+            raw=raw,
+        )
+
+    def test_ordered_command_option_pairs_are_captured(self) -> None:
+        events = pl.DataFrame(
+            [
+                self._telnet_event(
+                    "s1", "2026-08-19T10:00:00Z", command="WILL", option_name="NAWS"
+                ),
+                self._telnet_event(
+                    "s1", "2026-08-19T10:00:01Z", command="DONT", option_name="ECHO"
+                ),
+            ]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["telnet_options"] == ["WILL:NAWS", "DONT:ECHO"]
+        assert row["telnet_option_hash"] is not None
+
+    def test_missing_option_name_falls_back_to_option_byte(self) -> None:
+        events = pl.DataFrame(
+            [
+                self._telnet_event(
+                    "s1", "2026-08-19T10:00:00Z", command="WILL", option_byte=42
+                )
+            ]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["telnet_options"] == ["WILL:OPT42"]
+
+    def test_identical_sequences_across_sessions_hash_the_same(self) -> None:
+        def _options(session: str) -> list[dict]:
+            return [
+                self._telnet_event(
+                    session, "2026-08-19T10:00:00Z", command="WILL", option_name="NAWS"
+                ),
+                self._telnet_event(
+                    session, "2026-08-19T10:00:01Z", command="DONT", option_name="ECHO"
+                ),
+            ]
+
+        events = pl.DataFrame([*_options("s1"), *_options("s2")])
+
+        result = extract_session_features(events).sort("session")
+
+        hashes = result["telnet_option_hash"].to_list()
+        assert hashes[0] == hashes[1]
+        assert hashes[0] is not None
+
+    def test_consecutive_repeats_are_collapsed(self) -> None:
+        renegotiated = [
+            self._telnet_event(
+                "s1", "2026-08-19T10:00:00Z", command="WILL", option_name="NAWS"
+            ),
+            self._telnet_event(
+                "s1", "2026-08-19T10:00:01Z", command="WILL", option_name="NAWS"
+            ),
+        ]
+        single = [
+            self._telnet_event(
+                "s2", "2026-08-19T10:00:00Z", command="WILL", option_name="NAWS"
+            )
+        ]
+
+        events = pl.DataFrame([*renegotiated, *single])
+        result = extract_session_features(events).sort("session")
+
+        hashes = result["telnet_option_hash"].to_list()
+        assert hashes[0] == hashes[1]
+
+    def test_no_telnet_option_events_hashes_to_none(self) -> None:
+        events = pl.DataFrame(
+            [_event("s1", "cowrie.session.connect", "2026-08-19T10:00:00Z")]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["telnet_options"] == []
+        assert row["telnet_option_hash"] is None
+
+
+class TestExploitAttempt:
+    def test_true_and_cve_captured_when_present(self) -> None:
+        events = pl.DataFrame(
+            [
+                _event(
+                    "s1",
+                    "cowrie.telnet.exploit_attempt",
+                    "2026-08-19T10:00:00Z",
+                    protocol="telnet",
+                    raw={"cve": "CVE-2026-24061"},
+                )
+            ]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["has_exploit_attempt"] is True
+        assert row["exploit_cve"] == "CVE-2026-24061"
+
+    def test_false_when_no_exploit_attempt_event(self) -> None:
+        events = pl.DataFrame(
+            [_event("s1", "cowrie.session.connect", "2026-08-19T10:00:00Z")]
+        )
+
+        row = extract_session_features(events).row(0, named=True)
+
+        assert row["has_exploit_attempt"] is False
+        assert row["exploit_cve"] is None

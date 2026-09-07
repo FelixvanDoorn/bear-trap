@@ -4,7 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-from pipeline import run
+
+from honeypot.analysis.fingerprinting.pipeline import run
 
 
 def _fixture_snapshot(path: Path) -> None:
@@ -17,6 +18,7 @@ def _fixture_snapshot(path: Path) -> None:
                 "sensor": "sensor-01",
                 "src_ip": "1.2.3.4",
                 "cloud_provider": "aws",
+                "protocol": "ssh",
                 "command_input": None,
                 "duration_ms": None,
                 "username": None,
@@ -31,6 +33,7 @@ def _fixture_snapshot(path: Path) -> None:
                 "sensor": "sensor-01",
                 "src_ip": "1.2.3.4",
                 "cloud_provider": "aws",
+                "protocol": "ssh",
                 "command_input": "whoami",
                 "duration_ms": None,
                 "username": None,
@@ -54,5 +57,6 @@ class TestEndToEndOfflinePipeline:
         assert features.row(0, named=True)["client_version"] == "SSH-2.0-Go"
         assert (output_dir / "features" / "session_features.parquet").exists()
         assert (output_dir / "charts" / "client_fingerprint_breakdown.png").exists()
+        assert (output_dir / "charts" / "telnet_option_breakdown.png").exists()
         assert (output_dir / "charts" / "inter_command_timing.png").exists()
         assert (output_dir / "charts" / "command_sequence_clusters.png").exists()

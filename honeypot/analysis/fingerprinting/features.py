@@ -1,6 +1,4 @@
 # honeypot/analysis/fingerprinting/features.py
-from __future__ import annotations
-
 import hashlib
 import json
 import re
@@ -15,6 +13,7 @@ class SessionFeatures:
     sensor: str | None
     src_ip: str | None
     cloud_provider: str | None
+    protocol: str | None
     event_count: int
     command_count: int
     commands: list[str] = field(default_factory=list)
@@ -26,6 +25,10 @@ class SessionFeatures:
     client_version: str | None = None
     is_ssh_client: bool = False
     hassh: str | None = None
+    telnet_options: list[str] = field(default_factory=list)
+    telnet_option_hash: str | None = None
+    has_exploit_attempt: bool = False
+    exploit_cve: str | None = None
     username: str | None = None
     password: str | None = None
     has_agent_report: bool = False
@@ -38,6 +41,28 @@ def _raw_field(raw_json: object, field_name: str) -> str | None:
         return json.loads(raw_json).get(field_name)
     except json.JSONDecodeError:
         return None
+
+
+def _parse_raw(raw_json: object) -> dict:
+    if not isinstance(raw_json, str) or not raw_json:
+        return {}
+    try:
+        return json.loads(raw_json)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _telnet_option_label(raw_json: object) -> str | None:
+    """`cowrie.telnet.option` -> "<IAC command>:<option name>", e.g.
+    "WILL:NAWS". Telnet has no version banner or kex exchange the way SSH
+    does, so this ordered option-negotiation sequence is the closest
+    per-client analogue -- see _hash_telnet_options."""
+    parsed = _parse_raw(raw_json)
+    command = parsed.get("command")
+    if command is None:
+        return None
+    option_name = parsed.get("option_name") or f"OPT{parsed.get('option_byte')}"
+    return f"{command}:{option_name}"
 
 
 def _first_non_null(series: pl.Series) -> object | None:
@@ -91,6 +116,20 @@ def _hash_commands(commands: list[str]) -> str | None:
     return hashlib.sha256("\x1f".join(normalized).encode()).hexdigest()[:16]
 
 
+def _hash_telnet_options(options: list[str]) -> str | None:
+    """Fingerprint of a session's ordered telnet option-negotiation
+    sequence -- the telnet equivalent of _hash_commands/hassh. Consecutive
+    repeats (e.g. NAWS renegotiated on a terminal resize) are collapsed
+    first, same reasoning as _dedupe_consecutive for commands: that's a
+    renegotiation artifact, not a distinct client. Returns None for zero
+    options, same "nothing observed" vs. "real empty sequence" distinction
+    as _hash_commands."""
+    if not options:
+        return None
+    deduped = _dedupe_consecutive(options)
+    return hashlib.sha256("\x1f".join(deduped).encode()).hexdigest()[:16]
+
+
 def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
     events = events.sort("event_timestamp")
 
@@ -122,11 +161,27 @@ def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
 
     client_version = _raw_field(client_version_raw, "version")
 
+    telnet_option_rows = events.filter(pl.col("eventid") == "cowrie.telnet.option")
+    telnet_options = [
+        label
+        for raw in telnet_option_rows["raw"].to_list()
+        if (label := _telnet_option_label(raw)) is not None
+    ]
+
+    exploit_rows = events.filter(pl.col("eventid") == "cowrie.telnet.exploit_attempt")
+    has_exploit_attempt = exploit_rows.height > 0
+    exploit_cve = (
+        _raw_field(_first_non_null(exploit_rows["raw"]), "cve")
+        if has_exploit_attempt
+        else None
+    )
+
     return SessionFeatures(
         session=session_id,
         sensor=_first_non_null(events["sensor"]),
         src_ip=_first_non_null(events["src_ip"]),
         cloud_provider=_first_non_null(events["cloud_provider"]),
+        protocol=_first_non_null(events["protocol"]),
         event_count=events.height,
         command_count=len(commands),
         commands=commands,
@@ -141,6 +196,10 @@ def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
         # probes, scanner payloads, ...) that never actually spoke SSH.
         is_ssh_client=client_version is not None and client_version.startswith("SSH-"),
         hassh=_raw_field(kex_raw, "hassh"),
+        telnet_options=telnet_options,
+        telnet_option_hash=_hash_telnet_options(telnet_options),
+        has_exploit_attempt=has_exploit_attempt,
+        exploit_cve=exploit_cve,
         username=_first_non_null(events["username"]),
         password=_first_non_null(events["password"]),
         has_agent_report=bool(events["agent_type"].is_not_null().any()),
@@ -154,4 +213,8 @@ def extract_session_features(events: pl.DataFrame) -> pl.DataFrame:
         _session_features(session_id, group)
         for (session_id,), group in events.partition_by("session", as_dict=True).items()
     ]
-    return pl.DataFrame([asdict(row) for row in rows])
+    # infer_schema_length=None: sparse optional fields (e.g. exploit_cve) are
+    # None for virtually every session, so the default 100-row inference
+    # window can lock in the wrong dtype and then choke on the first real
+    # value it meets further down -- seen live once exploit_cve is involved.
+    return pl.DataFrame([asdict(row) for row in rows], infer_schema_length=None)

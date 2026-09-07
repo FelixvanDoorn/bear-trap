@@ -1,6 +1,4 @@
 # honeypot/analysis/fingerprinting/charts.py
-from __future__ import annotations
-
 import re
 from pathlib import Path
 
@@ -43,7 +41,12 @@ def _bucket_client_versions(features: pl.DataFrame) -> pl.DataFrame:
     into single buckets rather than one-off values each, since roughly 40%
     of what lands in this field on a real deployment isn't an SSH client at
     all, and showing each garbage value individually buries the real
-    signal in a long tail. Returns value_counts-shaped output."""
+    signal in a long tail. Returns value_counts-shaped output.
+
+    Telnet sessions are excluded entirely by the caller before this runs --
+    Cowrie never captures a version banner for telnet, so including them
+    would just inflate "(no banner captured)" with an unrelated population;
+    see plot_telnet_option_breakdown for their fingerprint equivalent."""
     bucketed = features.select(
         pl.when(pl.col("client_version").is_null())
         .then(pl.lit(_NO_BANNER_LABEL))
@@ -58,9 +61,10 @@ def _bucket_client_versions(features: pl.DataFrame) -> pl.DataFrame:
 def plot_client_fingerprint_breakdown(
     features: pl.DataFrame, output_dir: Path = OUTPUT_DIR
 ) -> Path:
-    """Bar chart of session counts per SSH client fingerprint bucket."""
+    """Bar chart of session counts per SSH client fingerprint bucket
+    (SSH sessions only -- see plot_telnet_option_breakdown for telnet)."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    counts = _bucket_client_versions(features)
+    counts = _bucket_client_versions(features.filter(pl.col("protocol") == "ssh"))
     labels = [_sanitize_label(v) for v in counts["client_version"].to_list()]
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -132,6 +136,59 @@ def plot_command_sequence_clusters(
     fig.tight_layout()
 
     path = output_dir / "command_sequence_clusters.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def _cluster_telnet_options(features: pl.DataFrame) -> pl.DataFrame:
+    """Exact-match clusters of session telnet option-negotiation sequences
+    (see features._hash_telnet_options) -- the telnet analogue of
+    _cluster_command_sequences, since Cowrie never logs a telnet client
+    version/banner the way it does for SSH. Sorted by size descending."""
+    with_options = features.filter(pl.col("telnet_option_hash").is_not_null())
+    return (
+        with_options.group_by("telnet_option_hash")
+        .agg(pl.len().alias("count"), pl.col("telnet_options").first())
+        .sort("count", descending=True)
+    )
+
+
+def plot_telnet_option_breakdown(
+    features: pl.DataFrame, output_dir: Path = OUTPUT_DIR, top_n: int = 20
+) -> Path:
+    """Bar chart of the largest exact-match telnet option-negotiation
+    clusters -- telnet's fingerprint equivalent of
+    plot_client_fingerprint_breakdown. Singleton clusters aren't plotted
+    individually but are summarized in the title, same reasoning as
+    plot_command_sequence_clusters."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clusters = _cluster_telnet_options(features)
+
+    n_sequences = clusters.height
+    n_singletons = clusters.filter(pl.col("count") == 1).height
+    n_sessions = int(clusters["count"].sum()) if n_sequences else 0
+
+    top = clusters.head(top_n)
+    labels = [
+        _sanitize_label(" ; ".join(opts), max_len=80)
+        for opts in top["telnet_options"].to_list()
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.barh(labels, top["count"].to_list())
+    for label in ax.get_yticklabels():
+        label.set_parse_math(False)
+    ax.invert_yaxis()
+    ax.set_xlabel("Session count")
+    ax.set_title(
+        f"Top {top.height} telnet option-sequence clusters of {n_sequences} "
+        f"distinct sequences across {n_sessions} sessions "
+        f"({n_singletons} unique/unmatched)"
+    )
+    fig.tight_layout()
+
+    path = output_dir / "telnet_option_breakdown.png"
     fig.savefig(path)
     plt.close(fig)
     return path

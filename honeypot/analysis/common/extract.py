@@ -1,9 +1,7 @@
-# honeypot/analysis/fingerprinting/extract.py
+# honeypot/analysis/common/extract.py
 #
 # live mode always writes a snapshot as a side effect, so every live pull
 # doubles as a fresh offline snapshot for later, credential-free reruns.
-from __future__ import annotations
-
 import datetime as dt
 import os
 from pathlib import Path

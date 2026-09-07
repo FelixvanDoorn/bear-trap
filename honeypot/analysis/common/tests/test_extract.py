@@ -1,12 +1,13 @@
-# honeypot/analysis/fingerprinting/tests/test_extract.py
+# honeypot/analysis/common/tests/test_extract.py
 from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
 import pytest
-from extract import get_sessions
 from polars.testing import assert_frame_equal
 from pytest_mock import MockerFixture
+
+from honeypot.analysis.common.extract import get_sessions
 
 
 class TestOfflineMode:

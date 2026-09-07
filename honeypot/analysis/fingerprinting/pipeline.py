@@ -1,17 +1,17 @@
 # honeypot/analysis/fingerprinting/pipeline.py
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 
 import polars as pl
-from charts import (
+
+from honeypot.analysis.common.extract import get_sessions
+from honeypot.analysis.fingerprinting.charts import (
     plot_client_fingerprint_breakdown,
     plot_command_sequence_clusters,
     plot_inter_command_timing,
+    plot_telnet_option_breakdown,
 )
-from extract import get_sessions
-from features import extract_session_features
+from honeypot.analysis.fingerprinting.features import extract_session_features
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
 
@@ -31,6 +31,7 @@ def run(
     features.write_parquet(features_dir / "session_features.parquet")
 
     plot_client_fingerprint_breakdown(features, output_dir=charts_dir)
+    plot_telnet_option_breakdown(features, output_dir=charts_dir)
     plot_inter_command_timing(features, output_dir=charts_dir)
     plot_command_sequence_clusters(features, output_dir=charts_dir)
 

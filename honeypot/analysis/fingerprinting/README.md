@@ -15,16 +15,19 @@ uv sync --group test --group analysis
 
 # Registers a Jupyter kernel pinned to this repo's .venv, so the notebook
 # always runs against exactly the versions pinned in uv.lock -- never a
-# separate/global Jupyter environment. --env bakes this directory onto
-# PYTHONPATH so the notebook can `import extract`/`features`/`charts`
-# directly, with no sys.path hack and no dependency on Jupyter's cwd
-# matching the notebook's location. $(pwd) is resolved by your shell at
-# registration time, so this is correct wherever you've cloned the repo --
-# nothing machine-specific is committed to git, same as the interpreter
-# path below it.
+# separate/global Jupyter environment. --env bakes the repo root onto
+# PYTHONPATH so the notebook can `import honeypot.analysis.fingerprinting
+# .features` etc. via normal absolute package imports, with no sys.path
+# hack and no dependency on Jupyter's cwd matching the notebook's
+# location. $(pwd) is resolved by your shell at registration time, so
+# this is correct wherever you've cloned the repo -- nothing
+# machine-specific is committed to git, same as the interpreter path
+# below it. This is the same kernel `network/notebooks/eda.ipynb` uses --
+# one shared kernel for all of honeypot/analysis/, since absolute
+# imports mean there's no per-submodule path to scope.
 uv run python -m ipykernel install --user --name bear-trap-analysis \
   --display-name "Python (bear-trap analysis)" \
-  --env PYTHONPATH "$(pwd)/honeypot/analysis/fingerprinting"
+  --env PYTHONPATH "$(pwd)"
 
 # Registers nbdime as this repo's git diff/merge driver for .ipynb files
 # (writes to .gitattributes, which is tracked, plus local .git/config,
@@ -41,24 +44,28 @@ kernel — imports assume that kernel's PYTHONPATH is set; there's no
 **Note**: a pre-commit hook (`nbstripout`) strips the notebook's outputs
 (charts, tables) before every commit, so git history only ever tracks code
 changes. That means the committed notebook renders with no output on
-GitHub — re-run it locally (or `uv run python pipeline.py`) to see results.
+GitHub — re-run it locally (or `uv run python -m
+honeypot.analysis.fingerprinting.pipeline`) to see results.
 
 ## Data access
 
 - **Offline (default, no credentials needed)**: reads the most recent
-  parquet snapshot from `outputs/snapshots/`. No snapshot ships in the repo
-  (that directory is gitignored), so you need at least one live pull first.
+  parquet snapshot from the shared `../common/outputs/snapshots/` (used by
+  every `honeypot/analysis/*` submodule, not just this one). No snapshot
+  ships in the repo (that directory is gitignored), so you need at least
+  one live pull first.
 - **Live**: `get_sessions("live")` queries BigQuery directly via
   `gcloud`'s application-default credentials
   (`gcloud auth application-default login`, project
   `mineral-droplet-160709`) and writes a fresh snapshot as a side effect —
   every live pull doubles as the next offline run's input.
 
-Regenerate the full dataset + chart set from the command line:
+Regenerate the full dataset + chart set from the command line, as a module
+from the repo root (`honeypot.analysis.*` is a real Python package now, so
+`python -m` resolves imports with no manual `PYTHONPATH`):
 
 ```sh
-cd honeypot/analysis/fingerprinting
-uv run python pipeline.py --mode live      # or --mode offline
+uv run python -m honeypot.analysis.fingerprinting.pipeline --mode live      # or --mode offline
 ```
 
 ## Known quirk: charts don't render inline

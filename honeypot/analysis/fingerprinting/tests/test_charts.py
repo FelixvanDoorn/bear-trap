@@ -2,14 +2,17 @@
 from pathlib import Path
 
 import polars as pl
-from charts import (
+
+from honeypot.analysis.fingerprinting.charts import (
     _NO_BANNER_LABEL,
     _NON_SSH_LABEL,
     _bucket_client_versions,
     _cluster_command_sequences,
+    _cluster_telnet_options,
     plot_client_fingerprint_breakdown,
     plot_command_sequence_clusters,
     plot_inter_command_timing,
+    plot_telnet_option_breakdown,
 )
 
 
@@ -18,6 +21,7 @@ def _features_df() -> pl.DataFrame:
         {
             "client_version": ["SSH-2.0-Go", "SSH-2.0-OpenSSH_8.9", None],
             "is_ssh_client": [True, True, False],
+            "protocol": ["ssh", "ssh", "ssh"],
             "inter_command_mean_s": [1.5, None, 12.0],
         }
     )
@@ -69,6 +73,7 @@ class TestPlotClientFingerprintBreakdown:
                     "x" * 200,
                 ],
                 "is_ssh_client": [False, False],
+                "protocol": ["ssh", "ssh"],
                 "inter_command_mean_s": [1.0, 2.0],
             }
         )
@@ -77,6 +82,87 @@ class TestPlotClientFingerprintBreakdown:
 
         assert path.exists()
         assert path.stat().st_size > 0
+
+    def test_telnet_sessions_are_excluded(self) -> None:
+        # Telnet has no version banner -- these must not be counted into
+        # "(no banner captured)" alongside real SSH sessions missing a
+        # banner; see plot_telnet_option_breakdown for their equivalent.
+        df = pl.DataFrame(
+            {
+                "client_version": ["SSH-2.0-OpenSSH_8.9", None],
+                "is_ssh_client": [True, False],
+                "protocol": ["ssh", "telnet"],
+            }
+        )
+
+        counts = _bucket_client_versions(df.filter(pl.col("protocol") == "ssh"))
+
+        assert counts["client_version"].to_list() == ["SSH-2.0-OpenSSH_8.9"]
+
+
+class TestClusterTelnetOptions:
+    def test_groups_identical_sequences_and_sorts_by_size(self) -> None:
+        df = pl.DataFrame(
+            {
+                "telnet_option_hash": ["a", "a", "a", "b", "b", None],
+                "telnet_options": [
+                    ["WILL:NAWS", "DONT:ECHO"],
+                    ["WILL:NAWS", "DONT:ECHO"],
+                    ["WILL:NAWS", "DONT:ECHO"],
+                    ["WONT:NAWS"],
+                    ["WONT:NAWS"],
+                    [],
+                ],
+            }
+        )
+
+        clusters = _cluster_telnet_options(df)
+
+        assert clusters.height == 2
+        top = clusters.row(0, named=True)
+        assert top["telnet_option_hash"] == "a"
+        assert top["count"] == 3
+        assert top["telnet_options"] == ["WILL:NAWS", "DONT:ECHO"]
+
+    def test_excludes_sessions_with_no_options(self) -> None:
+        df = pl.DataFrame(
+            {"telnet_option_hash": [None, None], "telnet_options": [[], []]},
+            schema={"telnet_option_hash": pl.Utf8, "telnet_options": pl.List(pl.Utf8)},
+        )
+
+        clusters = _cluster_telnet_options(df)
+
+        assert clusters.height == 0
+
+
+class TestPlotTelnetOptionBreakdown:
+    def test_writes_chart_file(self, tmp_path: Path) -> None:
+        df = pl.DataFrame(
+            {
+                "telnet_option_hash": ["a", "a", "b", None],
+                "telnet_options": [
+                    ["WILL:NAWS", "DONT:ECHO"],
+                    ["WILL:NAWS", "DONT:ECHO"],
+                    ["WONT:NAWS"],
+                    [],
+                ],
+            }
+        )
+
+        path = plot_telnet_option_breakdown(df, output_dir=tmp_path)
+
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_handles_no_option_sessions_without_raising(self, tmp_path: Path) -> None:
+        df = pl.DataFrame(
+            {"telnet_option_hash": [None, None], "telnet_options": [[], []]},
+            schema={"telnet_option_hash": pl.Utf8, "telnet_options": pl.List(pl.Utf8)},
+        )
+
+        path = plot_telnet_option_breakdown(df, output_dir=tmp_path)
+
+        assert path.exists()
 
 
 class TestClusterCommandSequences:
