@@ -59,7 +59,7 @@ data/fs.pickle
 # ==========================================
 # Analysis pipeline generated artifacts
 # ==========================================
-honeypot/analysis/fingerprinting/outputs/
+honeypot/analysis/*/outputs/
 .ipynb_checkpoints/
 
 # ==========================================

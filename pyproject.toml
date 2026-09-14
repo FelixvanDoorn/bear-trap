@@ -33,6 +33,7 @@ test = [
     "polars>=1.0.0",
     "pyarrow>=17.0.0",
     "matplotlib>=3.9.0",
+    "networkx>=3.0",
     "google-cloud-bigquery>=3.25.0",
     # nbconvert + ipykernel: the notebook execution test needs a real
     # working Jupyter kernel, not just the flat modules importable.
@@ -48,8 +49,13 @@ analysis = [
     "polars>=1.0.0",
     "pyarrow>=17.0.0",
     "matplotlib>=3.9.0",
+    "networkx>=3.0",
     "google-cloud-bigquery>=3.25.0",
     "ipykernel>=6.29.0",
+    # Standalone launcher (`uv run jupyter notebook`) so running the
+    # notebook doesn't depend on a Jupyter frontend already being present
+    # somewhere else on the machine (global install, VS Code extension, ...).
+    "notebook>=7.0.0",
 ]
 
 [tool.ruff]
@@ -60,5 +66,5 @@ target-version = "py312"
 select = ["E", "F", "I"]
 
 [tool.pytest.ini_options]
-pythonpath = ["honeypot/agent-sensor", "honeypot/analysis/fingerprinting"]
-testpaths = ["honeypot/agent-sensor/tests", "honeypot/analysis/fingerprinting/tests"]
+pythonpath = ["honeypot/agent-sensor", "."]
+testpaths = ["honeypot/agent-sensor/tests", "honeypot/analysis"]
