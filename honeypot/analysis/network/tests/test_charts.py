@@ -5,9 +5,11 @@ import networkx as nx
 import polars as pl
 
 from honeypot.analysis.network.charts import (
+    plot_ai_username_targeting,
     plot_cluster_size_distribution,
     plot_generic_credential_breakdown,
     plot_top_clusters_subgraph,
+    plot_username_targeting_breakdown,
 )
 
 
@@ -61,6 +63,30 @@ class TestPlotGenericCredentialBreakdown:
         assert path.exists()
 
 
+class TestPlotUsernameTargetingBreakdown:
+    def test_writes_chart_file(self, tmp_path: Path) -> None:
+        breakdown = pl.DataFrame(
+            {
+                "username": ["postgres", "grok"],
+                "distinct_ips": [100, 12],
+            }
+        )
+
+        path = plot_username_targeting_breakdown(breakdown, output_dir=tmp_path)
+
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_handles_empty_input_without_raising(self, tmp_path: Path) -> None:
+        breakdown = pl.DataFrame(
+            schema={"username": pl.Utf8, "distinct_ips": pl.UInt32}
+        )
+
+        path = plot_username_targeting_breakdown(breakdown, output_dir=tmp_path)
+
+        assert path.exists()
+
+
 class TestPlotTopClustersSubgraph:
     def test_writes_chart_file_for_a_small_cluster_set(self, tmp_path: Path) -> None:
         path = plot_top_clusters_subgraph(_small_graph(), output_dir=tmp_path)
@@ -83,3 +109,34 @@ class TestPlotTopClustersSubgraph:
         path = plot_top_clusters_subgraph(nx.Graph(), output_dir=tmp_path)
 
         assert path is None
+
+
+class TestPlotAiUsernameTargeting:
+    def test_writes_chart_file(self, tmp_path: Path) -> None:
+        breakdown = pl.DataFrame(
+            {
+                "username": ["claude", "ollama"],
+                "category": ["agent_tooling", "llm_runtime"],
+                "distinct_ips": [46, 2],
+                "distinct_passwords": [12, 1],
+            }
+        )
+
+        path = plot_ai_username_targeting(breakdown, output_dir=tmp_path)
+
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_handles_empty_input_without_raising(self, tmp_path: Path) -> None:
+        breakdown = pl.DataFrame(
+            schema={
+                "username": pl.Utf8,
+                "category": pl.Utf8,
+                "distinct_ips": pl.UInt32,
+                "distinct_passwords": pl.UInt32,
+            }
+        )
+
+        path = plot_ai_username_targeting(breakdown, output_dir=tmp_path)
+
+        assert path.exists()

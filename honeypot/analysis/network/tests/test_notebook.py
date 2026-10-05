@@ -30,21 +30,40 @@ def _fixture_snapshot(path: Path) -> None:
 
 
 def _oversized_cluster_snapshot(path: Path) -> None:
-    # 200 distinct IPs sharing one (non-generic) credential pair -> a
-    # single 201-node cluster (200 ip nodes + 1 cred node), comfortably
-    # past plot_top_clusters_subgraph's default max_nodes=150. Exercises
+    # 9 groups of 19 IPs, each group sharing two group-specific credential
+    # pairs. 19 stays under build_credential_graph's default min_ips_to_
+    # exclude=20, so the pairs survive into the bipartite graph (a single
+    # pair shared by 200+ IPs, as an earlier version of this fixture used,
+    # would just get excluded entirely and never reach the similarity
+    # graph at all). Within a group, identical TF-IDF vectors give cosine
+    # similarity 1.0, so each group becomes its own 19-IP cluster; the 9
+    # clusters combined (171 IPs) comfortably exceed plot_top_clusters_
+    # subgraph's default max_nodes=150 once it unions its top_n=10 largest
+    # clusters. One extra, unrelated IP keeps each group's df (19) below
+    # the total ip_count, so the shared pairs aren't *literally* ubiquitous
+    # -- that would zero out their idf (see graph._pair_idf). Exercises
     # the None-return path the notebook's own cell has to handle -- the
     # exact case that crashed with `Image(None)` before that cell checked
     # for None.
     pl.DataFrame(
         [
-            {
-                "src_ip": f"10.0.{i // 256}.{i % 256}",
-                "username": "botnet-op",
-                "password": "c2-relay-9931",
-            }
-            for i in range(200)
+            row
+            for group in range(9)
+            for i in range(19)
+            for row in (
+                {
+                    "src_ip": f"10.{group}.{i // 256}.{i % 256}",
+                    "username": f"botnet-op-{group}",
+                    "password": f"c2-relay-{group}",
+                },
+                {
+                    "src_ip": f"10.{group}.{i // 256}.{i % 256}",
+                    "username": f"botnet-op2-{group}",
+                    "password": f"c2-relay2-{group}",
+                },
+            )
         ]
+        + [{"src_ip": "203.0.113.1", "username": "unrelated", "password": "unrelated"}]
     ).write_parquet(path)
 
 
@@ -113,7 +132,8 @@ class TestNotebookExecutesCleanly:
         subgraph_cells = [
             cell
             for cell in executed["cells"]
-            if "plot_top_clusters_subgraph(graph)" in "".join(cell.get("source", []))
+            if "plot_top_clusters_subgraph(similarity_graph)"
+            in "".join(cell.get("source", []))
         ]
         assert len(subgraph_cells) == 1
         stream_text = "".join(

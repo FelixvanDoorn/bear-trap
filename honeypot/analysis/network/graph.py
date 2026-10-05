@@ -1,120 +1,38 @@
 # honeypot/analysis/network/graph.py
 #
 # Builds a bipartite graph of src_ip <-> (username, password) credential
-# pairs from raw session events, then clusters IPs via connected components
-# -- IPs that ever attempted the same credential pair end up in the same
-# cluster, a first-pass signal for shared campaign/botnet infrastructure.
-from dataclasses import dataclass
+# pairs from raw session events, projects it onto an IP-only similarity
+# graph (TF-IDF cosine over each IP's attempted pairs, plus a minimum
+# shared-pair count), then clusters IPs via connected components over that
+# projection -- a first-pass signal for shared campaign/botnet
+# infrastructure. See README.md "Filtering" for why each stage exists.
+import math
+from collections import Counter
+from itertools import combinations
 
 import networkx as nx
 import polars as pl
 
-
-@dataclass
-class ClusterAssignment:
-    src_ip: str
-    cluster_id: int
-    cluster_size: int
-
-
-# Credential pairs attempted by >=20 distinct src_ips in the 2026-08-29
-# offline snapshot (honeypot/analysis/network/notebooks/eda.ipynb) -- the
-# frequency distribution has a real cliff right here: 460 pairs at >=15
-# distinct IPs drops to 60 at >=20. Without excluding these, each one acts
-# as a hub node that connected_components merges every attempting IP
-# through, regardless of whether those IPs share anything else -- this is
-# exactly what produced a single 690-IP cluster out of 883 total IPs before
-# this list existed. Includes both genuinely generic default credentials
-# (admin/admin, root/123456, ...) and a handful of SIP/HTTP protocol-probe
-# artifacts that land in the username/password columns from non-SSH/Telnet
-# traffic (Cowrie has no dedicated field for those) -- neither carries real
-# credential-sharing signal, so both get excluded. A manual, data-derived
-# list rather than a frequency computed at graph-build time, so cluster
-# membership stays stable/reproducible across runs regardless of what a
-# given snapshot's live distribution looks like.
-_GENERIC_CREDENTIAL_PAIRS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("admin", "admin"),
-        ("root", "root"),
-        ("root", "123456"),
-        ("root", "12345"),
-        ("root", "password"),
-        ("root", "1234"),
-        ("root", "admin"),
-        ("support", "support"),
-        ("guest", "guest"),
-        ("root", "vizxv"),
-        ("admin", "1234"),
-        ("", ""),
-        ("user", "user"),
-        ("admin", "123456"),
-        ("root", "root123"),
-        ("root", "123"),
-        ("admin", "password"),
-        ("root", "123456789"),
-        ("admin", "admin123"),
-        ("admin", "admin1234"),
-        ("root", "111111"),
-        ("root", "12345678"),
-        ("root", "admin123"),
-        ("root", "1234567890"),
-        ("Call-ID: 50000", "CSeq: 42 OPTIONS"),
-        ("root", "pass"),
-        ("Max-Forwards: 70", "Content-Length: 0"),
-        ("GET / HTTP/1.0", ""),
-        ("Contact: <sip:nm@nm>", "Accept: application/sdp"),
-        ("From: <sip:nm@nm>;tag=root", "To: <sip:nm2@nm2>"),
-        ("root", "123123"),
-        ("OPTIONS sip:nm SIP/2.0", "Via: SIP/2.0/TCP nm;branch=foo"),
-        ("root", "ubuntu"),
-        ("root", "1q2w3e4r"),
-        ("root", "123321"),
-        ("root", ""),
-        ("root", "abc123"),
-        ("root", "P@ssw0rd"),
-        ("root", "000000"),
-        ("root", "passw0rd"),
-        ("root", "xc3511"),
-        ("root", "qwerty"),
-        ("root", "qwerty123"),
-        ("nobody", "nobody"),
-        ("admin", "123456789"),
-        ("root", "1qaz2wsx"),
-        ("root", "P@ssw0rd123"),
-        ("default", "default"),
-        ("root", "Passw0rd"),
-        ("ubuntu", "ubuntu"),
-        ("root", "1qaz@WSX"),
-        ("test", "test"),
-        ("user", "1234"),
-        ("root", "7ujMko0admin"),
-        ("admin", "abc123"),
-        ("root", "Zte521"),
-        ("root", "zlxx."),
-        ("admin", "12345"),
-        ("admin", ""),
-        ("postgres", "123"),
-    }
-)
+# A pair attempted by this many distinct src_ips or more is excluded from
+# the graph -- it acts as a hub node that connected_components merges every
+# attempting IP through, regardless of whether those IPs share anything
+# else. Computed fresh from whatever `events` is passed in (see
+# _credential_pair_frequency) rather than a fixed list of literal pairs: a
+# prior version hardcoded a denylist derived from one snapshot, and it went
+# stale the moment new data arrived -- pairs like (root, admin)/132 IPs and
+# (support, support)/120 IPs were never added to it, leaving a 2,906-of
+# -3,761-IP mega-cluster in a later pull despite the list "working" when it
+# was written. 20 is carried over from that same original snapshot's
+# frequency cliff as a starting default, not re-derived here.
+DEFAULT_MIN_IPS_TO_EXCLUDE = 20
 
 
-def build_credential_graph(
-    events: pl.DataFrame,
-    exclude_pairs: frozenset[tuple[str, str]] = _GENERIC_CREDENTIAL_PAIRS,
-) -> nx.Graph:
-    """Bipartite graph: one node per distinct src_ip, one node per distinct
-    (username, password) pair, an edge between them for every src_ip that
-    attempted that pair. Node ids are typed tuples -- ("ip", src_ip) /
-    ("cred", username, password) -- rather than string-prefixed labels, so
-    an attacker-controlled username/password value can never collide with a
-    real IP string. Rows missing either username or password (a partial
-    attempt) contribute no node or edge, and so does any pair in
-    `exclude_pairs` (see _GENERIC_CREDENTIAL_PAIRS) -- an IP whose every
-    attempt is excluded or partial ends up absent from the graph entirely,
-    not an isolated node. Pass exclude_pairs=frozenset() to disable
-    filtering."""
-    graph = nx.Graph()
-    attempts = (
+def _pair_attempts(events: pl.DataFrame) -> pl.DataFrame:
+    """One row per distinct (src_ip, username, password) triple actually
+    attempted -- rows missing either username or password (a partial
+    attempt) excluded. Shared base for the graph itself, credential-pair
+    frequency, and the username-targeting breakdown."""
+    return (
         events.filter(
             pl.col("username").is_not_null() & pl.col("password").is_not_null()
         )
@@ -122,6 +40,44 @@ def build_credential_graph(
         .unique()
     )
 
+
+def _credential_pair_frequency(attempts: pl.DataFrame) -> pl.DataFrame:
+    """One row per distinct (username, password) pair, with distinct_ips =
+    how many distinct src_ips attempted it. Sorted by distinct_ips
+    descending."""
+    return (
+        attempts.group_by("username", "password")
+        .agg(pl.col("src_ip").n_unique().alias("distinct_ips"))
+        .sort("distinct_ips", descending=True)
+    )
+
+
+def build_credential_graph(
+    events: pl.DataFrame,
+    min_ips_to_exclude: int | None = DEFAULT_MIN_IPS_TO_EXCLUDE,
+) -> nx.Graph:
+    """Bipartite graph: one node per distinct src_ip, one node per distinct
+    (username, password) pair, an edge between them for every src_ip that
+    attempted that pair. Node ids are typed tuples -- ("ip", src_ip) /
+    ("cred", username, password) -- rather than string-prefixed labels, so
+    an attacker-controlled username/password value can never collide with a
+    real IP string. Rows missing either username or password (a partial
+    attempt) contribute no node or edge, and so does any pair attempted by
+    >= min_ips_to_exclude distinct IPs (see DEFAULT_MIN_IPS_TO_EXCLUDE) --
+    an IP whose every attempt is excluded or partial ends up absent from
+    the graph entirely, not an isolated node. Pass min_ips_to_exclude=None
+    to disable filtering."""
+    attempts = _pair_attempts(events)
+
+    exclude_pairs: set[tuple[str, str]] = set()
+    if min_ips_to_exclude is not None:
+        frequency = _credential_pair_frequency(attempts)
+        excluded = frequency.filter(pl.col("distinct_ips") >= min_ips_to_exclude)
+        exclude_pairs = set(
+            zip(excluded["username"].to_list(), excluded["password"].to_list())
+        )
+
+    graph = nx.Graph()
     for src_ip, username, password in attempts.iter_rows():
         if (username, password) in exclude_pairs:
             continue
@@ -134,44 +90,142 @@ def build_credential_graph(
 
 def generic_credential_attempts(
     events: pl.DataFrame,
-    exclude_pairs: frozenset[tuple[str, str]] = _GENERIC_CREDENTIAL_PAIRS,
+    min_ips_to_exclude: int = DEFAULT_MIN_IPS_TO_EXCLUDE,
 ) -> pl.DataFrame:
     """The mirror image of build_credential_graph's filtering: one row per
-    denylisted (username, password) pair that was actually attempted, with
-    distinct_ips = how many distinct src_ips tried it -- the same signal
-    used to derive _GENERIC_CREDENTIAL_PAIRS in the first place. For
-    surfacing what build_credential_graph excludes, not for graph
-    construction; sorted by distinct_ips descending."""
-    attempts = (
-        events.filter(
-            pl.col("username").is_not_null() & pl.col("password").is_not_null()
-        )
-        .select("src_ip", "username", "password")
-        .unique()
-    )
+    (username, password) pair attempted by >= min_ips_to_exclude distinct
+    IPs, i.e. exactly what that call would exclude from the graph at the
+    same threshold -- surfaced separately for review, not silently
+    dropped. Sorted by distinct_ips descending."""
+    attempts = _pair_attempts(events)
+    frequency = _credential_pair_frequency(attempts)
+    return frequency.filter(pl.col("distinct_ips") >= min_ips_to_exclude)
 
-    rows = [
-        {"src_ip": src_ip, "username": username, "password": password}
-        for src_ip, username, password in attempts.iter_rows()
-        if (username, password) in exclude_pairs
-    ]
-    filtered = pl.DataFrame(
-        rows, schema={"src_ip": pl.Utf8, "username": pl.Utf8, "password": pl.Utf8}
-    )
 
+def username_targeting_breakdown(events: pl.DataFrame) -> pl.DataFrame:
+    """One row per distinct username attempted alongside a non-null
+    password, with distinct_ips = how many distinct src_ips tried it --
+    independent of the credential-sharing graph entirely. A widely-known
+    service (postgres, mysql, ...) gets probed with the same handful of
+    obvious passwords by many unrelated actors, so at the pair level it
+    looks like noise to connected_components for the same reason
+    root/admin does (see build_credential_graph's exclusion) -- this view
+    answers "who is looking for which app" directly, a question pair-level
+    clustering can't answer for exactly that reason. Sorted by
+    distinct_ips descending."""
+    attempts = _pair_attempts(events)
     return (
-        filtered.group_by("username", "password")
+        attempts.group_by("username")
         .agg(pl.col("src_ip").n_unique().alias("distinct_ips"))
         .sort("distinct_ips", descending=True)
     )
 
 
+def _pair_idf(graph: nx.Graph) -> dict[tuple, float]:
+    """Inverse-document-frequency weight per credential-pair node, treating
+    each IP as a "document" and each pair it attempted as a "term": idf(p)
+    = log(N / df(p)), N = distinct IPs in `graph`, df(p) = the pair's
+    degree (how many of them attempted it). A pair every IP attempted gets
+    idf 0 (contributes nothing); a pair only one or two IPs attempted gets
+    a large positive weight. Every credential-pair node has degree >= 1 by
+    construction (build_credential_graph only adds nodes with an edge), so
+    df is never 0 and this never divides by zero."""
+    ip_count = sum(1 for node in graph.nodes if node[0] == "ip")
+    return {
+        node: math.log(ip_count / graph.degree[node])
+        for node in graph.nodes
+        if node[0] == "cred"
+    }
+
+
+# build_ip_similarity_graph links two IPs only when BOTH thresholds below
+# hold -- each alone fails in a different, measured way (2026-09-16
+# snapshot, 3,401 clustered IPs):
+#
+# - DEFAULT_MIN_SIMILARITY: TF-IDF cosine similarity of the two IPs'
+#   attempted-pair sets. Scores *how distinctive* the overlap is: a pair
+#   shared by 19 IPs (barely under DEFAULT_MIN_IPS_TO_EXCLUDE) counts for
+#   far less than one shared by just 2, and cosine normalizes away IPs that
+#   simply try huge dictionaries. Used alone, though, 88% of its edges at
+#   0.1 rested on a single shared pair -- two IPs with tiny dictionaries
+#   that happen to share one rare pair score near 1.0 -- and those chained
+#   into a 1,185-IP component. Raising the threshold doesn't help, since
+#   those single-pair edges are exactly the highest-scoring ones.
+# - DEFAULT_MIN_SHARED_PAIRS: a minimum *amount* of evidence. Used alone
+#   (the earlier approach), it gave a 273-IP largest component -- but one
+#   with density 0.022 and a median edge cosine of 0.048: big-dictionary
+#   IPs with marginal overlap chaining a real core (top-decile edges share
+#   75+ pairs at cosine > 0.7) to everything around it.
+#
+# Combined, the largest component drops to 23 IPs (94% singletons), and
+# the result is much less sensitive to the cosine threshold (0.1 -> 0.5
+# moves the largest component 23 -> 19, vs 1,185 -> 321 for cosine alone).
+# Trade-off: connected_components is still single-linkage, and this may
+# over-split some real campaigns -- community detection (e.g. Louvain) on
+# the weighted graph is the natural next step if that shows up.
+DEFAULT_MIN_SIMILARITY = 0.1
+DEFAULT_MIN_SHARED_PAIRS = 2
+
+
+def build_ip_similarity_graph(
+    graph: nx.Graph,
+    min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    min_shared_pairs: int = DEFAULT_MIN_SHARED_PAIRS,
+) -> nx.Graph:
+    """Projects the bipartite credential-sharing graph (see
+    build_credential_graph) onto IPs alone: one node per distinct src_ip,
+    an edge between two IPs weighted by the TF-IDF cosine similarity of
+    their attempted credential-pair sets (see _pair_idf), kept only when
+    that similarity is >= min_similarity AND the two IPs share >=
+    min_shared_pairs credential pairs (see DEFAULT_MIN_SHARED_PAIRS for why
+    both). Each edge also carries the raw count as `shared_pairs`. Every IP
+    present in `graph` appears here too, even with no qualifying edges (an
+    isolated node, not absent) -- so assign_clusters still reports it as
+    its own singleton cluster. Accumulates each credential-pair node's
+    contribution across its neighbor pairs rather than comparing every IP
+    pair directly, since most credential-pair nodes have very few
+    neighbors -- cheap in practice even though a handful of higher-degree
+    nodes exist."""
+    idf = _pair_idf(graph)
+    ip_nodes = [node for node in graph.nodes if node[0] == "ip"]
+    cred_nodes = [node for node in graph.nodes if node[0] == "cred"]
+
+    norms = {
+        ip_node: math.sqrt(sum(idf[cred] ** 2 for cred in graph.neighbors(ip_node)))
+        for ip_node in ip_nodes
+    }
+
+    dot_products: Counter = Counter()
+    shared_counts: Counter = Counter()
+    for cred_node in cred_nodes:
+        weight_sq = idf[cred_node] ** 2
+        neighbors = sorted(graph.neighbors(cred_node))
+        for ip_a, ip_b in combinations(neighbors, 2):
+            dot_products[(ip_a, ip_b)] += weight_sq
+            shared_counts[(ip_a, ip_b)] += 1
+
+    similarity = nx.Graph()
+    similarity.add_nodes_from(ip_nodes)
+    for (ip_a, ip_b), dot in dot_products.items():
+        shared = shared_counts[(ip_a, ip_b)]
+        if shared < min_shared_pairs:
+            continue
+        denom = norms[ip_a] * norms[ip_b]
+        score = dot / denom if denom else 0.0
+        if score > 0 and score >= min_similarity:
+            similarity.add_edge(ip_a, ip_b, weight=score, shared_pairs=shared)
+
+    return similarity
+
+
 def assign_clusters(graph: nx.Graph) -> pl.DataFrame:
-    """Runs nx.connected_components over the bipartite graph and returns one
-    row per IP node (credential-pair nodes are graph-internal plumbing, not
-    part of the deliverable). cluster_id is assigned by component size
-    descending, tied-broken by the component's minimum src_ip ascending, so
-    results are reproducible regardless of set/dict iteration order."""
+    """Runs nx.connected_components over `graph` and returns one row per IP
+    node. Normally called on build_ip_similarity_graph's IP-only output;
+    also accepts the raw bipartite graph, where credential-pair nodes are
+    skipped as graph-internal plumbing rather than reported as rows.
+    cluster_id is assigned by component size descending, tie-broken by the
+    component's minimum src_ip ascending, so results are reproducible
+    regardless of set/dict iteration order."""
     components = []
     for component in nx.connected_components(graph):
         ip_addresses = sorted(node[1] for node in component if node[0] == "ip")
