@@ -102,6 +102,86 @@ def plot_generic_credential_breakdown(
     return path
 
 
+def plot_username_targeting_breakdown(
+    breakdown: pl.DataFrame, output_dir: Path = OUTPUT_DIR, top_n: int = 20
+) -> Path:
+    """Bar chart of the most-attempted usernames by distinct IP count --
+    independent of the credential-sharing graph, see
+    graph.username_targeting_breakdown. Expects `breakdown` with
+    username/distinct_ips columns, already sorted descending."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    top = breakdown.head(top_n)
+    labels = [_sanitize_label(u) for u in top["username"].to_list()]
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    if labels:
+        ax.barh(labels, top["distinct_ips"].to_list())
+        for label in ax.get_yticklabels():
+            label.set_parse_math(False)
+        ax.invert_yaxis()
+    ax.set_xlabel("Distinct IP count")
+    ax.set_title(f"Top {top.height} of {breakdown.height} usernames attempted")
+    fig.tight_layout()
+
+    path = output_dir / "username_targeting_breakdown.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+# Fixed category -> color order (categorical slots 1-5 of the dataviz
+# reference palette), so a category keeps its color across runs no matter
+# which categories a given snapshot happens to contain.
+_AI_CATEGORY_COLORS: dict[str, str] = {
+    "agent_tooling": "#2a78d6",
+    "model_vendor": "#eb6834",
+    "llm_runtime": "#1baf7a",
+    "ml_infra": "#eda100",
+    "generic_ai": "#e87ba4",
+}
+
+
+def plot_ai_username_targeting(
+    breakdown: pl.DataFrame, output_dir: Path = OUTPUT_DIR, top_n: int = 25
+) -> Path:
+    """Bar chart of the most-attempted AI-tooling usernames by distinct IP
+    count, colored by category -- see ai_targeting.ai_username_targeting.
+    Expects `breakdown` with username/category/distinct_ips columns,
+    already sorted descending."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    top = breakdown.head(top_n)
+    labels = [_sanitize_label(u) for u in top["username"].to_list()]
+    categories = top["category"].to_list()
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    if labels:
+        ax.barh(
+            labels,
+            top["distinct_ips"].to_list(),
+            color=[_AI_CATEGORY_COLORS.get(c, "#888888") for c in categories],
+        )
+        for label in ax.get_yticklabels():
+            label.set_parse_math(False)
+        ax.invert_yaxis()
+        present = [c for c in _AI_CATEGORY_COLORS if c in set(categories)]
+        handles = [
+            plt.Rectangle((0, 0), 1, 1, color=_AI_CATEGORY_COLORS[c]) for c in present
+        ]
+        ax.legend(handles, present, title="Category", loc="lower right")
+    ax.set_xlabel("Distinct IP count")
+    ax.set_title(
+        f"Top {top.height} of {breakdown.height} AI-tooling usernames attempted"
+    )
+    fig.tight_layout()
+
+    path = output_dir / "ai_username_targeting.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def plot_top_clusters_subgraph(
     graph: nx.Graph,
     output_dir: Path = OUTPUT_DIR,
@@ -110,12 +190,16 @@ def plot_top_clusters_subgraph(
 ) -> Path | None:
     """Node-link plot of ONLY the induced subgraph for the top_n largest
     connected components -- never the full graph, which could be thousands
-    of nodes. Re-derives components from `graph` directly since credential-
-    pair node membership isn't captured by assign_clusters' IP-only output.
-    If the induced subgraph itself still exceeds max_nodes, no file is
-    written and a warning is printed instead of forcing a hairball onto
-    disk -- max_nodes is a placeholder pending real cluster-size numbers
-    from the notebook, not a load-bearing threshold."""
+    of nodes. Normally passed graph.build_ip_similarity_graph's IP-only
+    output (which pipeline.py and the notebook do), so every node is an
+    IP; also labels credential-pair nodes if given the raw bipartite graph.
+    Re-derives components from `graph` directly rather than taking
+    assign_clusters' output, since it needs the edges, not just
+    membership. If the induced subgraph still exceeds max_nodes, no file
+    is written and a warning is printed instead of forcing a hairball onto
+    disk. On the 2026-09-16 snapshot the default top 10 clusters span 148
+    nodes -- just under max_nodes, so a modestly bigger snapshot may tip
+    this into skipping again."""
     components = sorted(
         nx.connected_components(graph), key=lambda c: len(c), reverse=True
     )
