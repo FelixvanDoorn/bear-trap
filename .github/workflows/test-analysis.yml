@@ -1,0 +1,63 @@
+name: Bear Trap Analysis Tests
+
+# Lint + test for honeypot/analysis/ only -- no deploy stage. Kept separate
+# from deploy-azure.yml (which also runs pytest, but only triggers on
+# agent-sensor changes and then deploys) so editing an analysis module or
+# notebook never triggers an Azure deployment, and analysis changes still
+# get tested. pyproject.toml / uv.lock are included since a dependency bump
+# can break analysis code without touching it.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'honeypot/analysis/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/test-analysis.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'honeypot/analysis/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/test-analysis.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint & Test Analysis Modules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The test group alone covers the full analysis suite (polars,
+      # matplotlib, seaborn, networkx, nbconvert, ipykernel, ...) -- see the
+      # comment on it in pyproject.toml.
+      - name: Install test dependencies
+        run: |
+          uv sync --group test
+
+      - name: Lint with Ruff
+        run: |
+          uv run ruff check honeypot/analysis
+
+      # Includes the notebook-execution tests, which run each eda.ipynb on
+      # ipykernel's built-in python3 kernel -- no `ipykernel install` step
+      # needed here.
+      - name: Run Pytest
+        run: |
+          uv run pytest honeypot/analysis

@@ -82,6 +82,12 @@ def _run_notebook(snapshot_dir: Path, tmp_path: Path) -> dict:
             "--to",
             "notebook",
             "--execute",
+            # Override the notebook's "bear-trap-analysis" kernelspec with
+            # ipykernel's built-in python3 kernel, which runs in this same
+            # environment (imports resolve via PYTHONPATH above) and exists on
+            # any machine -- the custom kernel only exists where someone ran
+            # the one-time `ipykernel install`, so CI would fail NoSuchKernel.
+            "--ExecutePreprocessor.kernel_name=python3",
             "--output-dir",
             str(tmp_path),
             "--output",
