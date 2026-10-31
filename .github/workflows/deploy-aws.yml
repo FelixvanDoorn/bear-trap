@@ -59,62 +59,65 @@ jobs:
   # ============================================================================
   # STAGE 2: Automated Deployment
   # ============================================================================
-  deploy:
-    name: Deploy Honeypot Node to AWS
-    needs: validate
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+  # Disabled: AWS/Azure nodes are shut down; collected data is kept as local
+  # snapshots (honeypot/analysis/common/outputs/snapshots).
+  # Uncomment to re-enable deploys once the nodes are back up.
+  #deploy:
+  #  name: Deploy Honeypot Node to AWS
+  #  needs: validate
+  #  if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #  runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+  #  steps:
+  #    - name: Checkout Code
+  #      uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::808198485584:role/BearTrap-Control-Node-GitHubActions-EC2-Deployer
-          aws-region: eu-north-1
+  #    - name: Configure AWS Credentials via OIDC
+  #      uses: aws-actions/configure-aws-credentials@v4
+  #      with:
+  #        role-to-assume: arn:aws:iam::808198485584:role/BearTrap-Control-Node-GitHubActions-EC2-Deployer
+  #        aws-region: eu-north-1
 
-      - name: Get Runner IP
-        id: ip
-        run: echo "runner_ip=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
+  #    - name: Get Runner IP
+  #      id: ip
+  #      run: echo "runner_ip=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
 
-      - name: Authorize Security Group Ingress
-        run: |
-          aws ec2 authorize-security-group-ingress \
-            --group-id sg-0217be33d7918a365 \
-            --protocol tcp \
-            --port 22222 \
-            --cidr ${{ steps.ip.outputs.runner_ip }}/32
+  #    - name: Authorize Security Group Ingress
+  #      run: |
+  #        aws ec2 authorize-security-group-ingress \
+  #          --group-id sg-0217be33d7918a365 \
+  #          --protocol tcp \
+  #          --port 22222 \
+  #          --cidr ${{ steps.ip.outputs.runner_ip }}/32
 
-      - name: Set up SSH Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+  #    - name: Set up SSH Key
+  #      uses: webfactory/ssh-agent@v0.9.0
+  #      with:
+  #        ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Deploy through SSH
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p 22222 16.16.156.14 >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          ssh -p 22222 ubuntu@16.16.156.14 "
-            if [ -d ~/bear-trap/.git ]; then
-              git -C ~/bear-trap fetch origin main && git -C ~/bear-trap reset --hard origin/main
-            else
-              git clone https://github.com/FelixvanDoorn/bear-trap.git ~/bear-trap
-            fi
-            cd ~/bear-trap/honeypot/control
-            chmod +x deploy-control.sh
-            ./deploy-control.sh
-          "
+  #    - name: Deploy through SSH
+  #      run: |
+  #        mkdir -p ~/.ssh
+  #        ssh-keyscan -p 22222 16.16.156.14 >> ~/.ssh/known_hosts
+  #        chmod 600 ~/.ssh/known_hosts
+  #        ssh -p 22222 ubuntu@16.16.156.14 "
+  #          if [ -d ~/bear-trap/.git ]; then
+  #            git -C ~/bear-trap fetch origin main && git -C ~/bear-trap reset --hard origin/main
+  #          else
+  #            git clone https://github.com/FelixvanDoorn/bear-trap.git ~/bear-trap
+  #          fi
+  #          cd ~/bear-trap/honeypot/control
+  #          chmod +x deploy-control.sh
+  #          ./deploy-control.sh
+  #        "
 
-      - name: Revoke Security Group Ingress
-        if: always()
-        run: |
-          if [ -n "${{ steps.ip.outputs.runner_ip }}" ]; then
-            aws ec2 revoke-security-group-ingress \
-              --group-id sg-0217be33d7918a365 \
-              --protocol tcp \
-              --port 22222 \
-              --cidr ${{ steps.ip.outputs.runner_ip }}/32
-          fi
+  #    - name: Revoke Security Group Ingress
+  #      if: always()
+  #      run: |
+  #        if [ -n "${{ steps.ip.outputs.runner_ip }}" ]; then
+  #          aws ec2 revoke-security-group-ingress \
+  #            --group-id sg-0217be33d7918a365 \
+  #            --protocol tcp \
+  #            --port 22222 \
+  #            --cidr ${{ steps.ip.outputs.runner_ip }}/32
+  #        fi

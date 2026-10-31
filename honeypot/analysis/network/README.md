@@ -43,6 +43,158 @@ names. Usernames containing whitespace (HTTP/SIP probe lines like
   excluded from the graph as generic (e.g. `claude`/`claude` attempted by
   >= `min_ips_to_exclude` IPs).
 
+## Do AI probes differ from other attackers? (DDS ch. 4)
+
+`ai_contrast.py` builds one profile per login-attempting IP (`ip_profiles`)
+and screens it for differences between IPs that tried an AI-tooling
+username and IPs that didn't (`compare_ai_probes`), using the generic
+`../common/stats.py` (`compare_groups`):
+
+- **Properties**: country, ASN, blocklist status, SSH client version,
+  hassh, ssh/telnet mix, node role, session outcomes (authenticated / ran
+  commands / file transfer / tunnel request), and distinct usernames /
+  passwords, credential attempts, sessions, active days, median session
+  length.
+- **Tests**: chi-square for categoricals (rare levels pooled into `other`
+  until every expected cell count is >= 5), Fisher's exact test for 2x2
+  tables, Mann-Whitney U for numerics. Effect sizes: Cramér's V and
+  rank-biserial r. **Read effect size with the q-value.** With a few
+  hundred IPs, a negligible difference can still come out significant.
+- **Multiple testing**: Benjamini-Hochberg FDR (`q_bh`, `significant_bh`)
+  is the decision criterion. This is an exploratory screen of ~17
+  correlated properties, so controlling the false-discovery rate fits
+  better than family-wise error. BH stays valid under the positive
+  dependence expected here (country vs ASN, client vs hassh). Holm and
+  Bonferroni are reported alongside for a stricter reading. Untestable
+  properties (one level, no variation) don't count toward m.
+- **Size-matched**: most AI probes are broad ~240-name dictionaries, so
+  against *all* IPs every test would mostly measure "big dictionary vs
+  one-shot". Both groups are restricted to IPs with >= `min_usernames`
+  (default 10, `--min-usernames`) distinct usernames. `distinct_usernames`
+  stays in the screen as a balance check. It still differs (median 38 vs
+  18 in the 2026-09-16 snapshot), so volume-type properties
+  (`distinct_passwords`, `credential_attempts`, `sessions`) partly echo
+  dictionary size rather than anything AI-specific.
+- **Unit is the IP**, but IPs in one campaign aren't independent. In the
+  2026-09-16 snapshot, 44 of the 104 AI-probe IPs (plus 13 non-AI ones)
+  sit in one ASN, AS197170 TechTies (NL), all sharing a single hassh. That
+  one campaign drives the country, ASN and hassh results: excluding the
+  ASN, country is no longer significant and hassh drops from V = 0.55 to
+  0.12. Check `category_breakdown` before reading a categorical hit as
+  "AI probes in general".
+- **One IP per credential cluster** (`one_ip_per_cluster`): reruns the
+  screen keeping only the busiest IP per (cluster, group), so a campaign
+  sharing one wordlist counts once per group. Written as
+  `ai_probe_comparison_by_cluster.parquet`. **It understates dependence
+  for large campaigns.** `build_credential_graph` drops pairs tried by >=
+  `min_ips_to_exclude` (20) IPs as generic, and a big campaign's own
+  wordlist crosses that line. In the 2026-09-16 snapshot, 22 of the 64
+  IPs on the campaign's hassh aren't in the graph at all and the rest
+  split over three clusters plus singletons. The matched set only shrinks
+  from 589 to 546 IPs and hassh stays at V = 0.44. So a property that
+  survives this check isn't shown to be independent of that campaign; use
+  `without_top_ai_level` for that.
+
+Outputs (`outputs/ai_contrast/`): `ip_enrichment.parquet`,
+`ai_probe_profiles.parquet` (drill-down input for
+`stats.category_breakdown`), `ai_probe_comparison.parquet`,
+`ai_probe_comparison_by_cluster.parquet`.
+
+**Visual walkthrough: `notebooks/ai_contrast.ipynb`.** It shows the screen
+table, then an effect-size dot plot comparing all matched IPs with the
+same screen after `without_top_ai_level` removes the dominant ASN, and
+with `one_ip_per_cluster`. A long bar between a property's dots means
+that effect came from one campaign. After that come share-of-IPs bars for country, ASN and hassh,
+and box plots for the numeric properties. The chart functions
+(`plot_ai_probe_effect_sizes`, `plot_ai_probe_breakdown`,
+`plot_ai_probe_distributions`) are in `charts.py`. Its execution test
+points `BEARTRAP_ENRICHMENT_DIR` at fixture DB-IP files, the enrichment
+equivalent of `BEARTRAP_SNAPSHOT_DIR`.
+
+### IP enrichment
+
+`../common/enrich.py` adds `country`, `asn`, `as_org` and `as_label` from
+DB-IP's free Lite databases (IPv4 only). The first run downloads the
+current month's country and ASN CSVs (~11 MB) into
+`../common/outputs/enrichment/` (gitignored), and later runs reuse them.
+Delete them to refresh. These lookups show who owns or where DB-IP places
+an address *now*, not at attack time.
+
+IP geolocation and ASN data by [DB-IP](https://db-ip.com), licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+## Already on a blocklist? (DDS ch. 4)
+
+`../common/threatintel.py` checks every source IP against two free
+public lists and adds `on_blocklist_de_ssh`, `on_firehol_level1` and
+`listed` (on either):
+
+- **blocklist.de `ssh.txt`**: IPs reported for SSH attacks. The closest
+  match to our traffic, but partly fed by other honeypots, so hits are
+  partly circular.
+- **FireHOL `level1`**: a low-false-positive aggregate of DShield, Feodo,
+  Spamhaus DROP and bogon ranges, mostly whole networks. It already
+  includes Spamhaus DROP, so that list isn't fetched separately.
+
+The first run downloads both (~150 KB) into
+`../common/outputs/threatintel/` (gitignored) with the date in the
+filename. Later runs reuse them; delete a file to refresh it. Like the
+DB-IP data, **a list shows what was listed on the download date, not at
+attack time**. blocklist.de drops IPs once reports stop, so for an older
+snapshot it partly measures "still active".
+
+`listed` is also a property in the AI-probe screen, a column in
+`reportable_ips.csv`, and the basis of `outputs/threatintel/`
+(`ip_listings.parquet`, `coverage_by_report_tier.parquet`,
+`coverage_by_ai_probe.parquet`).
+
+2026-09-16 snapshot against lists downloaded 2026-10-27:
+
+- **7.5% of all 10,637 source IPs are listed** (2.2% blocklist.de, 6.1%
+  FireHOL). 2,464 of the 2,651 reportable IPs (93%) are on neither list,
+  so most of what this honeypot sees isn't in these public feeds.
+- **AI probes look heavily listed (50% vs 7%, V = 0.47), but that's the
+  campaign again.** 59 of the 64 IPs on hassh `0a07365c...` are on FireHOL
+  level1, because their whole networks are: all 74 AS197170 TechTies IPs
+  in the data, plus the 2 BANATSYNC ones. The 5 campaign IPs elsewhere
+  aren't listed. Outside the campaign, 2.4% of matched IPs are on FireHOL.
+
+## Reporting abusive IPs
+
+`report.py` picks out the source IPs worth reporting and writes them to
+`outputs/report/` in two formats. **Nothing is submitted anywhere.**
+Uploading stays a manual step, because abuse reports are public and hard
+to retract.
+
+- `reportable_ips.csv`: one row per IP with the evidence: first/last
+  seen, sessions, protocols, login attempts, distinct usernames,
+  authenticated / ran commands / tunnel request / payload download,
+  country and ASN, blocklist flags (see above), `tier` and
+  `abuseipdb_categories`.
+- `abuseipdb_bulk.csv`: AbuseIPDB's
+  [bulk-report](https://www.abuseipdb.com/bulk-report) format (`IP`,
+  `Categories`, `ReportDate` = the IP's last event, `Comment`).
+
+An IP is reportable once it reaches any tier; `tier` is the highest:
+
+| Tier | Evidence | AbuseIPDB categories |
+|---|---|---|
+| 1 brute force | >= `--min-login-attempts` (default 10) login attempts | 18 Brute-Force |
+| 2 post-login activity | ran commands or requested a TCP tunnel | + 15 Hacking |
+| 3 payload delivery | a `wget`/`curl`/`tftp`/`ftpget` command, or a Cowrie file download/upload event (failed downloads count) | + 20 Exploited Host |
+
+Every row also gets 22 (SSH) and/or 23 (IoT Targeted, for Telnet;
+AbuseIPDB has no Telnet category). Category 18 needs the attempt
+threshold even when a higher tier applies. Comments state counts and
+behaviour only, never the honeypot's address, credentials or command
+text. Private, loopback and reserved addresses are dropped, and
+`--exclude-ip` (repeatable) keeps your own scanners or monitoring out.
+
+In the 2026-09-16 snapshot, 2,651 of 10,637 IPs are reportable: 75 tier
+1, 1,956 tier 2, 620 tier 3. Tier 2 dominates because `userdb.txt` lets
+root/admin in with any password, so most brute-forcers authenticate within
+a few tries and go straight to running commands.
+
 ## One-time setup
 
 ```sh
