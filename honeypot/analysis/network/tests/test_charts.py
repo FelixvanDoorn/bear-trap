@@ -5,6 +5,9 @@ import networkx as nx
 import polars as pl
 
 from honeypot.analysis.network.charts import (
+    plot_ai_probe_breakdown,
+    plot_ai_probe_distributions,
+    plot_ai_probe_effect_sizes,
     plot_ai_username_targeting,
     plot_cluster_size_distribution,
     plot_generic_credential_breakdown,
@@ -138,5 +141,91 @@ class TestPlotAiUsernameTargeting:
         )
 
         path = plot_ai_username_targeting(breakdown, output_dir=tmp_path)
+
+        assert path.exists()
+
+
+def _comparison(rows: list[tuple[str, str, float | None, bool | None]]) -> pl.DataFrame:
+    return pl.DataFrame(
+        rows,
+        schema={
+            "property": pl.Utf8,
+            "kind": pl.Utf8,
+            "effect_size": pl.Float64,
+            "significant_bh": pl.Boolean,
+        },
+        orient="row",
+    )
+
+
+class TestPlotAiProbeEffectSizes:
+    def test_writes_chart_for_two_scenarios_with_untestable_rows(
+        self, tmp_path: Path
+    ) -> None:
+        full = _comparison(
+            [
+                ("hassh", "categorical", 0.55, True),
+                ("as_label", "categorical", 0.51, True),
+                ("sessions", "numeric", 0.53, True),
+                ("active_days", "numeric", -0.22, True),
+            ]
+        )
+        sensitivity = _comparison(
+            [
+                ("hassh", "categorical", 0.12, True),
+                ("as_label", "categorical", None, None),  # untestable
+                ("sessions", "numeric", 0.25, False),
+                ("active_days", "numeric", 0.17, False),
+            ]
+        )
+
+        path = plot_ai_probe_effect_sizes(
+            {"all": full, "excluding AS1": sensitivity}, output_dir=tmp_path
+        )
+
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+    def test_single_kind_still_renders(self, tmp_path: Path) -> None:
+        only_numeric = _comparison([("sessions", "numeric", 0.3, True)])
+
+        path = plot_ai_probe_effect_sizes({"all": only_numeric}, output_dir=tmp_path)
+
+        assert path.exists()
+
+
+class TestPlotAiProbeBreakdown:
+    def test_writes_chart_named_after_column(self, tmp_path: Path) -> None:
+        breakdown = pl.DataFrame(
+            {
+                "level": ["NL", "other"],
+                "count_a": [44, 60],
+                "count_b": [24, 461],
+                "share_a": [0.42, 0.58],
+                "share_b": [0.05, 0.95],
+                "share_diff": [0.37, -0.37],
+            }
+        )
+
+        path = plot_ai_probe_breakdown(breakdown, "country", output_dir=tmp_path)
+
+        assert path.name == "ai_probe_breakdown_country.png"
+        assert path.stat().st_size > 0
+
+
+class TestPlotAiProbeDistributions:
+    def test_writes_chart_and_tolerates_all_null_column(self, tmp_path: Path) -> None:
+        profiles = pl.DataFrame(
+            {
+                "is_ai_probe": [True, True, False, False],
+                "sessions": [10, 200, 5, 30],
+                "median_session_s": [None, None, None, None],
+            },
+            schema_overrides={"median_session_s": pl.Float64},
+        )
+
+        path = plot_ai_probe_distributions(
+            profiles, ["sessions", "median_session_s"], output_dir=tmp_path
+        )
 
         assert path.exists()

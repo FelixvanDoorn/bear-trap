@@ -1,10 +1,23 @@
 # honeypot/analysis/network/pipeline.py
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 import polars as pl
 
+from honeypot.analysis.common.enrich import ENRICHMENT_DIR, load_enrichment
 from honeypot.analysis.common.extract import get_sessions
+from honeypot.analysis.common.threatintel import (
+    THREATINTEL_DIR,
+    listing_coverage,
+    load_listings,
+)
+from honeypot.analysis.network.ai_contrast import (
+    DEFAULT_MIN_USERNAMES,
+    ai_probe_profiles,
+    compare_ai_probes,
+    one_ip_per_cluster,
+)
 from honeypot.analysis.network.ai_targeting import (
     ai_targeting_ips,
     ai_username_targeting,
@@ -26,6 +39,11 @@ from honeypot.analysis.network.graph import (
     generic_credential_attempts,
     username_targeting_breakdown,
 )
+from honeypot.analysis.network.report import (
+    DEFAULT_MIN_LOGIN_ATTEMPTS,
+    abuseipdb_bulk,
+    reportable_ips,
+)
 
 OUTPUT_DIR = Path(__file__).parent / "outputs"
 
@@ -37,6 +55,11 @@ def run(
     min_ips_to_exclude: int = DEFAULT_MIN_IPS_TO_EXCLUDE,
     min_similarity: float = DEFAULT_MIN_SIMILARITY,
     min_shared_pairs: int = DEFAULT_MIN_SHARED_PAIRS,
+    min_usernames: int = DEFAULT_MIN_USERNAMES,
+    enrichment_dir: Path = ENRICHMENT_DIR,
+    min_login_attempts: int = DEFAULT_MIN_LOGIN_ATTEMPTS,
+    exclude_ips: Sequence[str] = (),
+    threatintel_dir: Path = THREATINTEL_DIR,
 ) -> pl.DataFrame:
     """Regenerate the credential-sharing cluster dataset and chart set from
     scratch."""
@@ -52,6 +75,24 @@ def run(
     username_breakdown = username_targeting_breakdown(events)
     ai_usernames = ai_username_targeting(events)
     ai_ips = ai_targeting_ips(events, clusters=clusters)
+    enrichment = load_enrichment(events, enrichment_dir=enrichment_dir)
+    listings = load_listings(events, threatintel_dir=threatintel_dir)
+    probe_profiles = ai_probe_profiles(
+        events,
+        enrichment=enrichment,
+        min_usernames=min_usernames,
+        listings=listings,
+    )
+    probe_comparison = compare_ai_probes(probe_profiles)
+    probe_comparison_by_cluster = compare_ai_probes(
+        one_ip_per_cluster(probe_profiles, clusters)
+    )
+    reportable = reportable_ips(
+        events,
+        min_login_attempts=min_login_attempts,
+        exclude_ips=exclude_ips,
+        enrichment=enrichment,
+    ).join(listings, on="src_ip", how="left")
 
     clusters_dir = output_dir / "clusters"
     charts_dir = output_dir / "charts"
@@ -63,6 +104,31 @@ def run(
     )
     ai_usernames.write_parquet(clusters_dir / "ai_username_targeting.parquet")
     ai_ips.write_parquet(clusters_dir / "ai_targeting_ips.parquet")
+
+    contrast_dir = output_dir / "ai_contrast"
+    contrast_dir.mkdir(parents=True, exist_ok=True)
+    enrichment.write_parquet(contrast_dir / "ip_enrichment.parquet")
+    probe_profiles.write_parquet(contrast_dir / "ai_probe_profiles.parquet")
+    probe_comparison.write_parquet(contrast_dir / "ai_probe_comparison.parquet")
+    probe_comparison_by_cluster.write_parquet(
+        contrast_dir / "ai_probe_comparison_by_cluster.parquet"
+    )
+
+    report_dir = output_dir / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    reportable.write_csv(report_dir / "reportable_ips.csv")
+    abuseipdb_bulk(reportable).write_csv(report_dir / "abuseipdb_bulk.csv")
+
+    threatintel_out = output_dir / "threatintel"
+    threatintel_out.mkdir(parents=True, exist_ok=True)
+    listings.write_parquet(threatintel_out / "ip_listings.parquet")
+    listing_coverage(reportable, "tier").write_parquet(
+        threatintel_out / "coverage_by_report_tier.parquet"
+    )
+    listing_coverage(
+        probe_profiles.select("src_ip", "is_ai_probe").join(listings, on="src_ip"),
+        "is_ai_probe",
+    ).write_parquet(threatintel_out / "coverage_by_ai_probe.parquet")
 
     plot_cluster_size_distribution(clusters, output_dir=charts_dir)
     plot_top_clusters_subgraph(similarity_graph, output_dir=charts_dir)
@@ -111,6 +177,31 @@ def main() -> None:
             "least this many credential pairs (default: %(default)s)."
         ),
     )
+    parser.add_argument(
+        "--min-usernames",
+        type=int,
+        default=DEFAULT_MIN_USERNAMES,
+        help=(
+            "Size-match the AI-probe comparison: only compare IPs that tried "
+            "at least this many distinct usernames (default: %(default)s)."
+        ),
+    )
+    parser.add_argument(
+        "--min-login-attempts",
+        type=int,
+        default=DEFAULT_MIN_LOGIN_ATTEMPTS,
+        help=(
+            "Report an IP for brute force once it made at least this many "
+            "login attempts (default: %(default)s)."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-ip",
+        action="append",
+        default=[],
+        dest="exclude_ips",
+        help="Never report this IP (repeatable), e.g. your own scanners.",
+    )
     args = parser.parse_args()
 
     clusters = run(
@@ -119,6 +210,9 @@ def main() -> None:
         min_ips_to_exclude=args.min_ips_to_exclude,
         min_similarity=args.min_similarity,
         min_shared_pairs=args.min_shared_pairs,
+        min_usernames=args.min_usernames,
+        min_login_attempts=args.min_login_attempts,
+        exclude_ips=args.exclude_ips,
     )
     print(f"Wrote {len(clusters)} cluster-assignment rows and charts to {OUTPUT_DIR}")
 

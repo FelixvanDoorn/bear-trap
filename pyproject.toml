@@ -35,6 +35,7 @@ test = [
     "matplotlib>=3.9.0",
     "seaborn>=0.13.0",
     "networkx>=3.0",
+    "scipy>=1.11.0",
     "google-cloud-bigquery>=3.25.0",
     # nbconvert + ipykernel: the notebook execution test needs a real
     # working Jupyter kernel, not just the flat modules importable.
@@ -54,6 +55,9 @@ analysis = [
     # charts; pulls in pandas, which seaborn converts polars frames to.
     "seaborn>=0.13.0",
     "networkx>=3.0",
+    # Hypothesis tests (chi-square, Fisher, Mann-Whitney) and
+    # false_discovery_control (Benjamini-Hochberg, needs >= 1.11).
+    "scipy>=1.11.0",
     "google-cloud-bigquery>=3.25.0",
     "ipykernel>=6.29.0",
     # Standalone launcher (`uv run jupyter notebook`) so running the

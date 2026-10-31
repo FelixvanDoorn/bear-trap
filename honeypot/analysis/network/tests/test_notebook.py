@@ -14,9 +14,16 @@ from pathlib import Path
 
 import polars as pl
 
+from honeypot.analysis.common.tests.test_enrich import write_dbip_fixtures
+from honeypot.analysis.common.tests.test_threatintel import (
+    write_blocklist_fixtures,
+)
+from honeypot.analysis.network.tests.test_ai_contrast import _events, _ip_events
+
 NETWORK_DIR = Path(__file__).parent.parent
 REPO_ROOT = NETWORK_DIR.parent.parent.parent
 NOTEBOOK_PATH = NETWORK_DIR / "notebooks" / "eda.ipynb"
+AI_CONTRAST_NOTEBOOK_PATH = NETWORK_DIR / "notebooks" / "ai_contrast.ipynb"
 
 
 def _fixture_snapshot(path: Path) -> None:
@@ -67,11 +74,35 @@ def _oversized_cluster_snapshot(path: Path) -> None:
     ).write_parquet(path)
 
 
-def _run_notebook(snapshot_dir: Path, tmp_path: Path) -> dict:
+def _ai_contrast_snapshot(path: Path) -> None:
+    # Fixture IPs land in test_enrich's DB-IP fixture ranges: 1.0.0.x =
+    # AS13335 (AU), 1.0.4.0-1.0.7.255 = AS38803 (CN). AS13335 is the
+    # over-represented "campaign" ASN among AI probes (20 of 30 vs 5 of
+    # 30), so without_top_ai_level has a real level to exclude and both
+    # groups still have IPs afterwards. Dictionary sizes vary so the
+    # numeric tests aren't all untestable.
+    rows: list[dict] = []
+    for i in range(30):
+        ai_ip = f"1.0.0.{i}" if i < 20 else f"1.0.5.{i}"
+        other_ip = f"1.0.0.{100 + i}" if i < 5 else f"1.0.4.{i}"
+        dictionary = [f"user{j}" for j in range(10 + i % 4)]
+        hassh = "campaign" if i < 20 else "other_tool"
+        rows += _ip_events(ai_ip, dictionary + ["claude"], f"a{i}", hassh=hassh)
+        rows += _ip_events(other_ip, dictionary, f"b{i}", hassh="other_tool")
+    _events(rows).write_parquet(path)
+
+
+def _run_notebook(
+    snapshot_dir: Path,
+    tmp_path: Path,
+    notebook_path: Path = NOTEBOOK_PATH,
+    extra_env: dict[str, str] | None = None,
+) -> dict:
     env = {
         **os.environ,
         "BEARTRAP_SNAPSHOT_DIR": str(snapshot_dir),
         "PYTHONPATH": str(REPO_ROOT),
+        **(extra_env or {}),
     }
 
     result = subprocess.run(
@@ -92,7 +123,7 @@ def _run_notebook(snapshot_dir: Path, tmp_path: Path) -> dict:
             str(tmp_path),
             "--output",
             "executed.ipynb",
-            str(NOTEBOOK_PATH),
+            str(notebook_path),
         ],
         env=env,
         capture_output=True,
@@ -148,3 +179,35 @@ class TestNotebookExecutesCleanly:
             if out.get("output_type") == "stream"
         )
         assert "Skipped" in stream_text
+
+
+class TestAiContrastNotebookExecutesCleanly:
+    def test_ai_contrast_notebook_runs_end_to_end(self, tmp_path: Path) -> None:
+        snapshot_dir = tmp_path / "snapshots"
+        snapshot_dir.mkdir()
+        _ai_contrast_snapshot(snapshot_dir / "logs_20260101T000000Z.parquet")
+        enrichment_dir = tmp_path / "enrichment"
+        write_dbip_fixtures(enrichment_dir)
+        threatintel_dir = tmp_path / "threatintel"
+        write_blocklist_fixtures(threatintel_dir)
+
+        executed = _run_notebook(
+            snapshot_dir,
+            tmp_path,
+            notebook_path=AI_CONTRAST_NOTEBOOK_PATH,
+            # Fixture DB-IP files and blocklists, so the notebook never
+            # downloads.
+            extra_env={
+                "BEARTRAP_ENRICHMENT_DIR": str(enrichment_dir),
+                "BEARTRAP_THREATINTEL_DIR": str(threatintel_dir),
+            },
+        )
+
+        assert _errors(executed) == []
+        stream_text = "".join(
+            "".join(out.get("text", []))
+            for cell in executed["cells"]
+            for out in cell.get("outputs", [])
+            if out.get("output_type") == "stream"
+        )
+        assert "Excluded 25 IPs in AS13335 Cloudflare, Inc." in stream_text

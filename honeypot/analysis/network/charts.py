@@ -1,5 +1,12 @@
 # honeypot/analysis/network/charts.py
+#
+# The older charts here are plain matplotlib; the AI-probe contrast charts
+# (bottom of the file) use seaborn, styled per chart via _style() like
+# overview/charts.py, so importing this module never restyles anything
+# else.
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import matplotlib
@@ -11,6 +18,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import networkx as nx  # noqa: E402
 import polars as pl  # noqa: E402
+import seaborn as sns  # noqa: E402
+from matplotlib.ticker import PercentFormatter  # noqa: E402
+
+from honeypot.analysis.network.ai_contrast import GROUP_COLUMN  # noqa: E402
 
 OUTPUT_DIR = Path(__file__).parent / "outputs" / "charts"
 
@@ -246,4 +257,245 @@ def plot_top_clusters_subgraph(
     path = output_dir / "top_clusters_subgraph.png"
     fig.savefig(path)
     plt.close(fig)
+    return path
+
+
+# --- AI-probe contrast (ai_contrast.py) -----------------------------------
+
+# Fixed group -> color (categorical slots 1-2 of the dataviz reference
+# palette). Also the scenario order for plot_ai_probe_effect_sizes: the
+# first comparison passed gets slot 1, the second slot 2.
+_GROUP_LABELS = {True: "AI probe", False: "matched other"}
+_GROUP_COLORS = {"AI probe": "#2a78d6", "matched other": "#eb6834"}
+_SCENARIO_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
+_SIGNIFICANCE_MARKERS = {"q < alpha (BH)": "o", "not significant": "X"}
+_EFFECT_PANELS = [
+    ("categorical", "Cramér's V (0 = no association)"),
+    ("numeric", "rank-biserial r (> 0: AI probes higher)"),
+]
+
+
+@contextmanager
+def _style() -> Iterator[None]:
+    """Seaborn's whitegrid look for one chart: light recessive gridlines,
+    no heavy frame."""
+    with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
+        yield
+
+
+def _effect_long(comparisons: dict[str, pl.DataFrame]) -> pl.DataFrame:
+    """stats.compare_groups outputs, one per scenario label -> one row per
+    (scenario, property) with a significance label. Untestable rows have
+    no effect size to draw and are dropped."""
+    return pl.concat(
+        [
+            comparison.filter(pl.col("effect_size").is_not_null())
+            .select("property", "kind", "effect_size", "significant_bh")
+            .with_columns(
+                pl.lit(label).alias("scenario"),
+                pl.when(pl.col("significant_bh"))
+                .then(pl.lit("q < alpha (BH)"))
+                .otherwise(pl.lit("not significant"))
+                .alias("significance"),
+            )
+            for label, comparison in comparisons.items()
+        ]
+    )
+
+
+def plot_ai_probe_effect_sizes(
+    comparisons: dict[str, pl.DataFrame],
+    output_dir: Path = OUTPUT_DIR,
+    filename: str = "ai_probe_effect_sizes.png",
+) -> Path:
+    """Dot plot of every property's effect size from one or more
+    ai_contrast.compare_ai_probes results (scenario label -> result, e.g.
+    {"all IPs": ..., "excluding AS197170": ...}). Two panels, since the
+    measures differ: Cramér's V for categoricals, signed rank-biserial r
+    for numerics. Color = scenario, marker = BH significance (so it never
+    rests on color alone), and a thin line joins one property's scenarios
+    so a collapsing effect is visible as a long bar. Properties are
+    ordered by the first scenario's |effect size|."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    long = _effect_long(comparisons)
+    scenarios = list(comparisons)
+    palette = dict(zip(scenarios, _SCENARIO_COLORS))
+    first = long.filter(pl.col("scenario") == scenarios[0])
+
+    panels = [
+        (kind, xlabel, long.filter(pl.col("kind") == kind))
+        for kind, xlabel in _EFFECT_PANELS
+    ]
+    panels = [panel for panel in panels if panel[2].height]
+    heights = [max(panel[2]["property"].n_unique(), 1) for panel in panels] or [1]
+
+    with _style():
+        fig, axes = plt.subplots(
+            len(heights),
+            1,
+            figsize=(9, 1.5 + 0.42 * sum(heights)),
+            gridspec_kw={"height_ratios": heights},
+            squeeze=False,
+        )
+        for ax, (kind, xlabel, data) in zip(axes[:, 0], panels):
+            order = (
+                first.filter(pl.col("kind") == kind)
+                .sort(pl.col("effect_size").abs(), descending=True)["property"]
+                .to_list()
+            )
+            order += [p for p in data["property"].unique().sort() if p not in order]
+            rank = {prop: i for i, prop in enumerate(order)}
+            spans = data.group_by("property").agg(
+                pl.col("effect_size").min().alias("lo"),
+                pl.col("effect_size").max().alias("hi"),
+            )
+            ax.hlines(
+                [rank[p] for p in spans["property"]],
+                spans["lo"],
+                spans["hi"],
+                color="#c3c2b7",
+                linewidth=2,
+                zorder=1,
+            )
+            sns.scatterplot(
+                data=data.to_pandas(),
+                x="effect_size",
+                y=data["property"].replace_strict(rank).to_list(),
+                hue="scenario",
+                hue_order=scenarios,
+                palette=palette,
+                style="significance",
+                style_order=list(_SIGNIFICANCE_MARKERS),
+                markers=_SIGNIFICANCE_MARKERS,
+                s=90,
+                edgecolor="white",
+                linewidth=1,
+                zorder=2,
+                ax=ax,
+                legend="auto" if ax is axes[0, 0] else False,
+            )
+            ax.set_yticks(range(len(order)), order)
+            ax.set_ylim(len(order) - 0.5, -0.5)
+            ax.set_xlim((0, 1) if kind == "categorical" else (-1, 1))
+            if kind == "numeric":
+                ax.axvline(0, color="#52514e", linewidth=1, zorder=0)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("")
+        if axes[0, 0].get_legend() is not None:
+            sns.move_legend(
+                axes[0, 0], "upper left", bbox_to_anchor=(1.01, 1), frameon=False
+            )
+        axes[0, 0].set_title("AI probes vs size-matched IPs: effect size per property")
+        fig.tight_layout()
+
+        path = output_dir / filename
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+    return path
+
+
+def plot_ai_probe_breakdown(
+    breakdown: pl.DataFrame,
+    column: str,
+    output_dir: Path = OUTPUT_DIR,
+    top_n: int = 12,
+) -> Path:
+    """Grouped bars of the share of each group's IPs per level of one
+    categorical property -- stats.category_breakdown output (already
+    collapsed and sorted most-over-represented-in-AI-probes first), so the
+    levels drawn are exactly the ones compare_ai_probes tested. Shares, not
+    counts: the groups differ ~5x in size."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    top = breakdown.head(top_n).with_columns(
+        pl.col("level").map_elements(_sanitize_label, return_dtype=pl.Utf8)
+    )
+    long = top.unpivot(
+        index="level",
+        on=["share_a", "share_b"],
+        variable_name="group",
+        value_name="share",
+    ).with_columns(
+        pl.col("group").replace_strict(
+            {"share_a": _GROUP_LABELS[True], "share_b": _GROUP_LABELS[False]}
+        )
+    )
+
+    with _style():
+        fig, ax = plt.subplots(figsize=(10, 1.5 + 0.55 * max(top.height, 1)))
+        if top.height:
+            sns.barplot(
+                data=long.to_pandas(),
+                x="share",
+                y="level",
+                hue="group",
+                hue_order=list(_GROUP_COLORS),
+                palette=_GROUP_COLORS,
+                order=top["level"].to_list(),
+                edgecolor="white",
+                linewidth=2,
+                ax=ax,
+            )
+            for label in ax.get_yticklabels():
+                label.set_parse_math(False)
+            sns.move_legend(
+                ax, "upper left", bbox_to_anchor=(1.01, 1), title=None, frameon=False
+            )
+        ax.xaxis.set_major_formatter(PercentFormatter(1.0))
+        ax.set_xlabel("Share of the group's IPs")
+        ax.set_ylabel("")
+        ax.set_title(f"{column}: AI probes vs size-matched IPs")
+        fig.tight_layout()
+
+        path = output_dir / f"ai_probe_breakdown_{column}.png"
+        fig.savefig(path)
+        plt.close(fig)
+    return path
+
+
+def plot_ai_probe_distributions(
+    profiles: pl.DataFrame,
+    columns: list[str],
+    output_dir: Path = OUTPUT_DIR,
+) -> Path:
+    """One box plot per numeric property (small multiples, each on its own
+    symlog x-axis -- these are heavy-tailed counts with zeros), AI probes
+    vs size-matched IPs. ai_contrast.ai_probe_profiles output; nulls are
+    left out per property, same as the Mann-Whitney tests."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data = profiles.with_columns(
+        pl.col(GROUP_COLUMN).replace_strict(_GROUP_LABELS).alias("group")
+    )
+
+    with _style():
+        fig, axes = plt.subplots(
+            len(columns), 1, figsize=(9, 1.2 + 1.3 * len(columns)), squeeze=False
+        )
+        for ax, column in zip(axes[:, 0], columns):
+            values = data.filter(pl.col(column).is_not_null())
+            if values.height:
+                sns.boxplot(
+                    data=values.select("group", column).to_pandas(),
+                    x=column,
+                    y="group",
+                    hue="group",
+                    order=list(_GROUP_COLORS),
+                    hue_order=list(_GROUP_COLORS),
+                    palette=_GROUP_COLORS,
+                    width=0.6,
+                    linewidth=1,
+                    fliersize=3,
+                    ax=ax,
+                )
+                ax.set_xscale("symlog", linthresh=1)
+                # Every property is >= 0; symlog would otherwise autoscale
+                # a mirrored, meaningless negative half.
+                ax.set_xlim(left=0)
+            ax.set_ylabel("")
+            ax.set_xlabel(column)
+        axes[0, 0].set_title("Numeric properties: AI probes vs size-matched IPs")
+        fig.tight_layout()
+
+        path = output_dir / "ai_probe_distributions.png"
+        fig.savefig(path)
+        plt.close(fig)
     return path
