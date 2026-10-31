@@ -36,6 +36,7 @@ test = [
     "seaborn>=0.13.0",
     "networkx>=3.0",
     "scipy>=1.11.0",
+    "statsmodels>=0.14.0",
     "google-cloud-bigquery>=3.25.0",
     # nbconvert + ipykernel: the notebook execution test needs a real
     # working Jupyter kernel, not just the flat modules importable.
@@ -58,6 +59,8 @@ analysis = [
     # Hypothesis tests (chi-square, Fisher, Mann-Whitney) and
     # false_discovery_control (Benjamini-Hochberg, needs >= 1.11).
     "scipy>=1.11.0",
+    # Count regression (Poisson / negative binomial GLMs) for geo/.
+    "statsmodels>=0.14.0",
     "google-cloud-bigquery>=3.25.0",
     "ipykernel>=6.29.0",
     # Standalone launcher (`uv run jupyter notebook`) so running the
