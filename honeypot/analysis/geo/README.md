@@ -28,6 +28,10 @@ mean attackers scale in proportion to address space.
   predictive band.
 - `validation.py`: split stability across five split methods, response
   robustness, influence, bootstrap and cross-validation.
+- `covariates.py`: internet users and GDP per capita from the World Bank
+  (`../common/worldbank.py`) as extra predictors, compared in and out of
+  sample.
+- `maps.py`: Natural Earth country shapes for the choropleth maps.
 - `charts.py`, `pipeline.py`, `notebooks/regression.ipynb`.
 
 ## Method
@@ -92,6 +96,28 @@ distance with refits after dropping the most influential countries, a
 bootstrap over countries (500 resamples), and repeated 5-fold
 cross-validation (held-out log-likelihood, compared per fold) between
 Poisson, NB and NB with a quadratic term.
+
+### Beyond address space
+
+`covariates.py` adds two World Bank indicators (values older than 2015
+treated as missing), each on the log scale:
+
+    log E[IPs] = b0 + beta * log(addresses)
+                 + g1 * log(internet users) + g2 * log(GDP per capita)
+
+Internet users = share of the population online x population. Every
+slope is an elasticity. Specifications are fitted on the same subset (the
+countries with both indicators) and compared by AIC, alpha and the same
+repeated 5-fold cross-validation. `log_correlations` reports the log-scale
+correlations and VIFs, since address space and internet users overlap.
+
+### Maps
+
+`plot_choropleth_maps`: raw attacking IPs per country, then observed /
+expected under the address-space model and under the covariate model, on
+a diverging log scale with significant countries outlined. Natural Earth
+1:50m shapes keyed by `ISO_A2_EH` (the plain `ISO_A2` column has `-99`
+for France, Norway and Kosovo), in the equal-area Equal Earth projection.
 
 ## Findings (2026-09-16 snapshot, DB-IP 2026-10)
 
@@ -181,6 +207,43 @@ NB's dispersion of 2.6 isn't a wrong variance curve:
   described in `../network/README.md`. Uzbekistan and Myanmar stand out
   under both protocols; Andorra only under SSH.
 
+**Beyond address space** (World Bank indicators; 205 countries with both,
+holding 10,530 of the 10,637 attacking IPs; Taiwan is the main gap):
+
+| Specification | AIC | alpha | beta (address space) | CV vs address space |
+|---|---|---|---|---|
+| address space | 1,399 | 1.48 | 0.83 [0.74, 0.91] | -- |
+| + internet users | 1,341 | 1.02 | 0.50 [0.39, 0.60] | +0.10 per country, 80% of folds |
+| + GDP per capita | 1,374 | 1.26 | 0.90 [0.81, 0.99] | +0.03, 78% of folds |
+| + both | 1,340 | 1.02 | 0.38 [0.20, 0.56] | +0.10, 76% of folds |
+
+- **Internet users is the covariate that matters.** It lowers alpha by
+  about a third (more of the between-country variation explained rather
+  than left as noise), and the gain holds out of sample. GDP per capita
+  adds little on top (slope 0.17, p = 0.13), and the full model predicts
+  no better than address space + internet users.
+- **Address space was partly a proxy for internet population.** Its slope
+  falls from 0.83 to 0.38 once internet users enter (elasticity 0.61).
+  The two are correlated (log r = 0.80, VIF 8-9), so the split between
+  them is uncertain, but their sum, about 1.0, is proportional scaling:
+  attackers grow 1:1 with the combined size of a country's internet.
+- **Uzbekistan and Myanmar are explained.** Their ratios fall from ~19x
+  and 16x to ~5x and are no longer significant. Uzbekistan has about 33
+  million internet users on 0.4 million IPv4 addresses: its excess per
+  address came from many users sharing few addresses, not from unusual
+  attack activity per user.
+- **Ukraine and Argentina become the clearest outliers.** Ukraine is 9x
+  (q 0.03) and Argentina 7.8x (q 0.06) given their internet population,
+  and both are spread over many networks (above). Andorra rises to 39x,
+  as expected for one hosting provider in a country of 80,000 people.
+
+The maps (`charts/choropleth_maps.png`) show the shift: the raw map
+lights up the US, China, Russia and Brazil; the address-space residual
+map Uzbekistan, Myanmar, Pakistan, Argentina and Ukraine; with
+covariates, Ukraine is the only significant country large enough to see
+(Andorra, the other one, is too small to see on a world map), with Argentina
+and Pakistan still clearly above expectation.
+
 ## Caveats
 
 - **Exposure is allocation, not use.** DB-IP counts every allocated
@@ -194,10 +257,10 @@ NB's dispersion of 2.6 isn't a wrong variance curve:
 - **One honeypot pair, one month.** Two sensors see a small slice of the
   internet. The time split shows stability within this month, not
   beyond it.
-- Missing covariates (internet users, broadband penetration, patching
-  practice) likely explain some residuals: rich, well-administered
-  countries sit below the line. Adding them is a separate step and should
-  be judged with the cross-validation already here.
+- **Covariates are country averages from different years.** Internet
+  share is mostly 2024, GDP and population 2025; the attacks are from
+  2026. Other plausible drivers (mobile broadband share, IPv6 adoption,
+  patching practice) aren't in the model.
 
 ## Running it
 
@@ -207,8 +270,10 @@ uv sync --group test --group analysis
 PYTHONPATH=. uv run python -m honeypot.analysis.geo.pipeline   # --n-boot, --repeats, --min-ips
 ```
 
-Outputs go to `outputs/` (gitignored): `model/` and `validation/` parquet
-tables, `charts/` PNGs. The notebook uses the shared "Python (bear-trap
+Outputs go to `outputs/` (gitignored): `model/`, `validation/` and
+`covariates/` parquet tables, `charts/` PNGs. The first run also downloads
+the World Bank indicators (~150 KB) and Natural Earth shapes (~800 KB)
+into `../common/outputs/`. The notebook uses the shared "Python (bear-trap
 analysis)" kernel (setup in `../network/README.md`).
 
 ## Tests
@@ -218,7 +283,11 @@ whose counts are drawn from a negative binomial with a chosen slope and
 dispersion, so the tests check that the fit recovers them, that Poisson
 data passes the overdispersion checks, and that an injected outlier is
 flagged and ranked most influential. `test_notebook.py` runs the notebook
-end to end on a synthetic world with fixture DB-IP files.
+end to end on a synthetic world with fixture DB-IP, World Bank and shape
+files, so no test downloads anything.
 
 IP geolocation and ASN data by [DB-IP](https://db-ip.com), licensed
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Country
+indicators from the [World Bank Open Data](https://data.worldbank.org)
+API, licensed CC BY 4.0. Country shapes from
+[Natural Earth](https://www.naturalearthdata.com) (public domain).

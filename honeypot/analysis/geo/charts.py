@@ -18,10 +18,16 @@ import matplotlib
 # initialize a GUI backend.
 matplotlib.use("Agg")
 
+import geopandas as gpd  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 import seaborn as sns  # noqa: E402
+from matplotlib.colors import (  # noqa: E402
+    LinearSegmentedColormap,
+    LogNorm,
+    Normalize,
+)
 from scipy import stats  # noqa: E402
 
 from honeypot.analysis.geo.regression import ExposureFit  # noqa: E402
@@ -488,3 +494,101 @@ def plot_bootstrap_slope(
         )
         ax.legend(frameon=False)
         return _save(fig, output_dir, "bootstrap_slope.png")
+
+
+# Sequential blue ramp (light -> dark) for magnitudes, and a diverging
+# blue <- neutral -> orange pair for under / over expectation.
+_SEQUENTIAL_BLUES = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
+_DIVERGING = [
+    "#104281",
+    "#3987e5",
+    "#9ec5f4",
+    "#f0efec",
+    "#f7c3a6",
+    "#eb6834",
+    "#a8401a",
+]
+_NO_DATA = "#e4e2dc"
+_RATIO_TICKS = [1 / 20, 1 / 5, 1 / 2, 1, 2, 5, 20]
+
+
+def _ratio_label(ratio: float) -> str:
+    return f"1/{round(1 / ratio)}" if ratio < 1 else f"{ratio:g}"
+
+
+def plot_choropleth_maps(
+    shapes: gpd.GeoDataFrame,
+    counts: pl.DataFrame,
+    residual_sets: dict[str, pl.DataFrame],
+    output_dir: Path = OUTPUT_DIR,
+    max_ratio: float = 20.0,
+) -> Path:
+    """Data-Driven Security ch. 5 in one figure: a map of raw attacking
+    IPs per country (sequential, log scale), then one map per entry of
+    `residual_sets` (title -> country_residuals output) of observed /
+    expected on a diverging log scale clipped at 1/`max_ratio` and
+    `max_ratio`. Significant countries (q < 0.05) get a dark outline;
+    countries with no value are drawn in light gray."""
+    sequential = LinearSegmentedColormap.from_list("blues", _SEQUENTIAL_BLUES)
+    diverging = LinearSegmentedColormap.from_list("over_under", _DIVERGING)
+    limit = float(np.log(max_ratio))
+    panels = 1 + len(residual_sets)
+    with _style():
+        fig, axes = plt.subplots(panels, 1, figsize=(12, 4.8 * panels))
+        axes = np.atleast_1d(axes)
+
+        raw = shapes.merge(
+            counts.select("country", "ips").to_pandas(), on="country", how="left"
+        )
+        has_ips = raw["ips"] > 0
+        if (~has_ips).any():
+            raw[~has_ips].plot(ax=axes[0], color=_NO_DATA, edgecolor="white", lw=0.3)
+        raw[has_ips].plot(
+            ax=axes[0],
+            column="ips",
+            cmap=sequential,
+            norm=LogNorm(vmin=1, vmax=float(raw["ips"].max())),
+            edgecolor="white",
+            lw=0.3,
+            legend=True,
+            legend_kwds={"label": "attacking IPs (log scale)", "shrink": 0.6},
+        )
+        axes[0].set_title("Raw count: mostly a map of address space")
+
+        for ax, (title, residuals) in zip(axes[1:], residual_sets.items()):
+            merged = shapes.merge(
+                residuals.select("country", "log_ratio", "significant").to_pandas(),
+                on="country",
+                how="left",
+            )
+            known = merged["log_ratio"].notna()
+            if (~known).any():
+                merged[~known].plot(ax=ax, color=_NO_DATA, edgecolor="white", lw=0.3)
+            merged.loc[known, "clipped"] = merged.loc[known, "log_ratio"].clip(
+                -limit, limit
+            )
+            merged[known].plot(
+                ax=ax,
+                column="clipped",
+                cmap=diverging,
+                norm=Normalize(-limit, limit),
+                edgecolor="white",
+                lw=0.3,
+            )
+            flagged = merged[known & merged["significant"].fillna(False).astype(bool)]
+            if len(flagged):
+                flagged.boundary.plot(ax=ax, color=_INK, lw=1.2)
+            colorbar = fig.colorbar(
+                plt.cm.ScalarMappable(norm=Normalize(-limit, limit), cmap=diverging),
+                ax=ax,
+                shrink=0.6,
+                ticks=np.log(_RATIO_TICKS),
+            )
+            colorbar.ax.set_yticklabels([_ratio_label(r) for r in _RATIO_TICKS])
+            colorbar.set_label("observed / expected (outlined: q < 0.05)")
+            ax.set_title(title)
+
+        for ax in axes:
+            ax.set_axis_off()
+        fig.tight_layout()
+        return _save(fig, output_dir, "choropleth_maps.png")

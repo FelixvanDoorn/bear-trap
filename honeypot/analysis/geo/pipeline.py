@@ -11,8 +11,10 @@ from honeypot.analysis.common.enrich import (
     read_ranges,
 )
 from honeypot.analysis.common.extract import get_sessions
+from honeypot.analysis.common.worldbank import WORLDBANK_DIR, load_indicators
 from honeypot.analysis.geo.charts import (
     plot_bootstrap_slope,
+    plot_choropleth_maps,
     plot_country_ratios,
     plot_exposure_fit,
     plot_mean_variance,
@@ -21,11 +23,21 @@ from honeypot.analysis.geo.charts import (
     plot_split_methods,
     plot_split_scatter,
 )
+from honeypot.analysis.geo.covariates import (
+    COVARIATE_SPECS,
+    COVARIATES,
+    compare_specifications,
+    covered,
+    full_model_coefficients,
+    log_correlations,
+    with_indicators,
+)
 from honeypot.analysis.geo.exposure import (
     address_space,
     attacker_ips,
     country_counts,
 )
+from honeypot.analysis.geo.maps import SHAPES_DIR, load_country_shapes
 from honeypot.analysis.geo.regression import (
     country_residuals,
     fit_exposure_model,
@@ -43,6 +55,7 @@ from honeypot.analysis.geo.validation import (
     DEFAULT_REPEATS,
     bootstrap_slope,
     bootstrap_summary,
+    compare_country_residuals,
     compare_split_methods,
     cross_validate,
     drop_influential,
@@ -63,6 +76,8 @@ def run(
     n_boot: int = DEFAULT_N_BOOT,
     repeats: int = DEFAULT_REPEATS,
     min_ips: int = DEFAULT_MIN_IPS,
+    worldbank_dir: Path = WORLDBANK_DIR,
+    shapes_dir: Path = SHAPES_DIR,
 ) -> pl.DataFrame:
     """Regenerate the exposure-regression tables and charts from scratch.
     Returns country_residuals of the main fit."""
@@ -83,6 +98,12 @@ def run(
         attackers, space, repeats=repeats, min_ips=min_ips
     )
     draws = bootstrap_slope(counts, n_boot=n_boot)
+
+    with_covariates = with_indicators(counts, load_indicators(worldbank_dir))
+    common_rows = covered(with_covariates)
+    covariate_residuals = country_residuals(
+        fit_exposure_model(common_rows, covariates=COVARIATES)
+    )
 
     model_dir = output_dir / "model"
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -106,9 +127,30 @@ def run(
         "bootstrap_summary": bootstrap_summary(draws),
         "cross_validation": cross_validate(counts),
     }
+    covariate_tables = {
+        "country_counts_with_indicators": with_covariates,
+        "log_correlations": log_correlations(with_covariates),
+        "specifications": compare_specifications(with_covariates),
+        "coefficients": full_model_coefficients(with_covariates),
+        "cross_validation": cross_validate(
+            with_covariates, specs=COVARIATE_SPECS, baseline="address space"
+        ),
+        "country_residuals": covariate_residuals,
+        "residuals_vs_baseline": compare_country_residuals(
+            {
+                "address_space": fit_exposure_model(common_rows),
+                "covariates": fit_exposure_model(common_rows, covariates=COVARIATES),
+            }
+        ),
+    }
     validation_dir = output_dir / "validation"
-    validation_dir.mkdir(parents=True, exist_ok=True)
-    for directory, group in ((model_dir, tables), (validation_dir, validation_tables)):
+    covariates_dir = output_dir / "covariates"
+    for directory, group in (
+        (model_dir, tables),
+        (validation_dir, validation_tables),
+        (covariates_dir, covariate_tables),
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
         for name, table in group.items():
             table.write_parquet(directory / f"{name}.parquet")
 
@@ -127,6 +169,15 @@ def run(
             split_log_ratios(attackers, space, method), title, output_dir=charts_dir
         )
     plot_bootstrap_slope(draws, slope(fit)["beta"], output_dir=charts_dir)
+    plot_choropleth_maps(
+        load_country_shapes(shapes_dir),
+        counts,
+        {
+            "vs address space": residuals,
+            "vs address space + internet users + GDP per capita": (covariate_residuals),
+        },
+        output_dir=charts_dir,
+    )
 
     return residuals
 

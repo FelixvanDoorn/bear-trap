@@ -477,10 +477,13 @@ def bootstrap_summary(draws: pl.DataFrame, level: float = 0.95) -> pl.DataFrame:
     )
 
 
-CV_MODELS = {
-    "poisson": ("poisson", False),
-    "negbin": ("negbin", False),
-    "negbin_quadratic": ("negbin", True),
+# name -> (model, quadratic, covariates): a model specification to compare.
+ModelSpec = tuple[str, bool, tuple[str, ...]]
+
+CV_MODELS: dict[str, ModelSpec] = {
+    "poisson": ("poisson", False, ()),
+    "negbin": ("negbin", False, ()),
+    "negbin_quadratic": ("negbin", True, ()),
 }
 
 
@@ -490,40 +493,55 @@ def cross_validate(
     k: int = 5,
     repeats: int = 10,
     seed: int = DEFAULT_SEED,
+    specs: dict[str, ModelSpec] = CV_MODELS,
+    baseline: str = "negbin",
 ) -> pl.DataFrame:
-    """Repeated k-fold cross-validation over countries for each CV_MODELS
-    entry: mean held-out log-likelihood per country (higher is better),
+    """Repeated k-fold cross-validation over countries for each entry of
+    `specs`: mean held-out log-likelihood per country (higher is better),
     its standard deviation across the k * repeats folds, and the paired
-    per-fold difference from plain NB with the share of folds where the
-    model beat it. Compare models on the paired difference: the fold-to-
-    fold spread mostly reflects which countries landed in a fold, and it
-    is the same for every model."""
+    per-fold difference from the `baseline` spec with the share of folds
+    where the spec beat it. Compare specs on the paired difference: the
+    fold-to-fold spread mostly reflects which countries landed in a fold,
+    and it is the same for every spec. Every spec is scored on the same
+    countries: those with every covariate any spec uses."""
+    covariates = sorted(
+        {c for _, _, spec_covariates in specs.values() for c in spec_covariates}
+    )
+    counts = counts.filter(
+        pl.all_horizontal(
+            [pl.col(c).is_not_null() & (pl.col(c) > 0) for c in covariates]
+        )
+        if covariates
+        else pl.lit(True)
+    )
     rng = np.random.default_rng(seed)
-    scores: dict[str, list[float]] = {name: [] for name in CV_MODELS}
+    scores: dict[str, list[float]] = {name: [] for name in specs}
     for _ in range(repeats):
         folds = rng.permutation(counts.height) % k
         for fold in range(k):
             train = counts.filter(pl.Series(folds != fold))
             test = counts.filter(pl.Series(folds == fold))
-            fits = {
-                quadratic: fit_exposure_model(train, response, quadratic=quadratic)
-                for quadratic in (False, True)
-            }
-            for name, (model, quadratic) in CV_MODELS.items():
+            fits: dict[tuple[bool, tuple[str, ...]], ExposureFit] = {}
+            for name, (model, quadratic, spec_covariates) in specs.items():
+                key = (quadratic, spec_covariates)
+                if key not in fits:
+                    fits[key] = fit_exposure_model(
+                        train, response, quadratic=quadratic, covariates=spec_covariates
+                    )
                 scores[name].append(
-                    float(heldout_loglik(fits[quadratic], test, model).mean())
+                    float(heldout_loglik(fits[key], test, model).mean())
                 )
-    baseline = np.array(scores["negbin"])
+    reference = np.array(scores[baseline])
     rows = []
     for name, values in scores.items():
-        diff = np.array(values) - baseline
+        diff = np.array(values) - reference
         rows.append(
             {
                 "model": name,
                 "folds": len(values),
                 "mean_heldout_loglik": float(np.mean(values)),
                 "sd": float(np.std(values, ddof=1)),
-                "diff_vs_negbin": float(diff.mean()),
+                f"diff_vs_{baseline}": float(diff.mean()),
                 "sd_diff": float(np.std(diff, ddof=1)),
                 "share_folds_better": float(np.mean(diff > 0)),
             }

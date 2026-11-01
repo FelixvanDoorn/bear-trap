@@ -53,25 +53,37 @@ FREQUENCY_BANDS: list[tuple[int, int | None]] = [
 _LOG_RATIO_PSEUDOCOUNT = 0.5
 
 
-def design(addresses: np.ndarray, center: float, quadratic: bool = False) -> np.ndarray:
-    """Model matrix: intercept, centered log(addresses) and optionally its
-    square (a curvature check on the log-log line). Centering changes only
-    the intercept's meaning (log count at the mean log size), not beta."""
-    x = np.log(addresses.astype(float)) - center
+def design(
+    data: pl.DataFrame,
+    centers: dict[str, float],
+    quadratic: bool = False,
+    covariates: tuple[str, ...] = (),
+) -> np.ndarray:
+    """Model matrix: intercept, centered log(addresses), optionally its
+    square (a curvature check on the log-log line), then each covariate's
+    centered log. Centering changes only the intercept's meaning (log count
+    at the mean of every log predictor), not the slopes."""
+
+    def centered(column: str) -> np.ndarray:
+        return np.log(data[column].to_numpy().astype(float)) - centers[column]
+
+    x = centered("addresses")
     columns = [np.ones_like(x), x] + ([x**2] if quadratic else [])
+    columns += [centered(column) for column in covariates]
     return np.column_stack(columns)
 
 
 @dataclass(frozen=True)
 class ExposureFit:
-    """Poisson and NB2 fits of one count column on log(addresses).
-    `data` keeps the rows fitted (country, addresses, response) so every
-    check below works from the fit alone."""
+    """Poisson and NB2 fits of one count column on log(addresses) (plus
+    any log covariates). `data` keeps the rows fitted (country, addresses,
+    response, covariates) so every check below works from the fit alone."""
 
     data: pl.DataFrame
     response: str
-    center: float
+    centers: dict[str, float]
     quadratic: bool
+    covariates: tuple[str, ...]
     poisson: GLMResults
     negbin: NegativeBinomialResults
 
@@ -84,6 +96,15 @@ class ExposureFit:
         return self.data["addresses"].to_numpy()
 
     @property
+    def terms(self) -> list[str]:
+        """Names of the model-matrix columns, in order."""
+        return (
+            ["intercept", "log_addresses"]
+            + (["log_addresses_sq"] if self.quadratic else [])
+            + [f"log_{column}" for column in self.covariates]
+        )
+
+    @property
     def converged(self) -> bool:
         return bool(self.negbin.mle_retvals.get("converged", False))
 
@@ -92,13 +113,14 @@ class ExposureFit:
         """NB2 dispersion: variance = mu + alpha * mu^2."""
         return float(self.negbin.params[-1])
 
-    def mu(self, model: str, addresses: np.ndarray | None = None) -> np.ndarray:
+    def mu(self, model: str, data: pl.DataFrame | None = None) -> np.ndarray:
         """Expected counts under "poisson" or "negbin", at the fitted rows
-        or at new `addresses` (centered with this fit's center)."""
+        or at the rows of new `data` (centered with this fit's centers)."""
         exog = design(
-            self.addresses if addresses is None else addresses,
-            self.center,
+            self.data if data is None else data,
+            self.centers,
             self.quadratic,
+            self.covariates,
         )
         params = self.poisson.params if model == "poisson" else self.negbin.params
         return np.exp(exog @ params[: exog.shape[1]])
@@ -108,16 +130,28 @@ def fit_exposure_model(
     counts: pl.DataFrame,
     response: str = DEFAULT_RESPONSE,
     quadratic: bool = False,
+    covariates: tuple[str, ...] = (),
 ) -> ExposureFit:
     """Poisson GLM and NB2 (maximum likelihood, alpha estimated) of
-    `response` on log(addresses), over geo.exposure.country_counts output.
-    The NB fit starts from the Poisson coefficients, which keeps it
-    converging on sparse subsets (one split part, a bootstrap draw)."""
-    data = counts.select("country", "addresses", response)
-    addresses = data["addresses"].to_numpy()
+    `response` on log(addresses) and the log of each `covariates` column,
+    over geo.exposure.country_counts output (with covariates joined on, see
+    geo/covariates.py). Rows missing a covariate, or with a non-positive
+    one, are dropped. The NB fit starts from the Poisson coefficients,
+    which keeps it converging on sparse subsets (one split part, a
+    bootstrap draw)."""
+    data = counts.select("country", "addresses", response, *covariates).filter(
+        pl.all_horizontal(
+            [pl.col(c).is_not_null() & (pl.col(c) > 0) for c in covariates]
+        )
+        if covariates
+        else pl.lit(True)
+    )
+    centers = {
+        column: float(np.log(data[column].to_numpy().astype(float)).mean())
+        for column in ("addresses", *covariates)
+    }
     y = data[response].to_numpy().astype(float)
-    center = float(np.log(addresses.astype(float)).mean())
-    exog = design(addresses, center, quadratic)
+    exog = design(data, centers, quadratic, covariates)
 
     poisson = sm.GLM(y, exog, family=sm.families.Poisson()).fit()
     # The optimizer's line search can probe a negative alpha on the way to
@@ -128,7 +162,30 @@ def fit_exposure_model(
         negbin = sm.NegativeBinomial(y, exog, loglike_method="nb2").fit(
             start_params=np.append(poisson.params, 0.5), disp=0, maxiter=500
         )
-    return ExposureFit(data, response, center, quadratic, poisson, negbin)
+    return ExposureFit(
+        data, response, centers, quadratic, tuple(covariates), poisson, negbin
+    )
+
+
+def coefficients(fit: ExposureFit, alpha: float = DEFAULT_ALPHA) -> pl.DataFrame:
+    """The NB coefficients (intercept and every slope, not alpha) with
+    standard errors, Wald CIs and p-values for coefficient = 0. A slope on
+    a log predictor is an elasticity: +1% in the predictor multiplies the
+    expected count by about (1 + slope / 100)."""
+    k = len(fit.terms)
+    params = np.asarray(fit.negbin.params[:k])
+    se = np.asarray(fit.negbin.bse[:k])
+    z_crit = stats.norm.ppf(1 - alpha / 2)
+    return pl.DataFrame(
+        {
+            "term": fit.terms,
+            "coef": params,
+            "se": se,
+            "ci_low": params - z_crit * se,
+            "ci_high": params + z_crit * se,
+            "p_value": 2 * stats.norm.sf(np.abs(params / se)),
+        }
+    )
 
 
 def _nb_shape(mu: np.ndarray, alpha: float) -> tuple[float, np.ndarray]:
@@ -427,15 +484,22 @@ def prediction_band(
 ) -> pl.DataFrame:
     """NB expected count and central `level` predictive interval over a
     log-spaced grid of address-space sizes spanning the data: the band a
-    country's count should fall in if it only reflected its size."""
+    country's count should fall in if it only reflected its size (any
+    covariates held at their mean)."""
     addresses = fit.addresses
-    grid = np.geomspace(addresses.min(), addresses.max(), n_points)
+    grid = pl.DataFrame(
+        {"addresses": np.geomspace(addresses.min(), addresses.max(), n_points)}
+    ).with_columns(
+        # Covariates held at their (geometric) mean, i.e. 0 once centered.
+        pl.lit(float(np.exp(fit.centers[column]))).alias(column)
+        for column in fit.covariates
+    )
     mu = fit.mu("negbin", grid)
     n, p = _nb_shape(mu, fit.alpha)
     tail = (1 - level) / 2
     return pl.DataFrame(
         {
-            "addresses": grid,
+            "addresses": grid["addresses"],
             "expected": mu,
             "low": stats.nbinom.ppf(tail, n, p),
             "high": stats.nbinom.ppf(1 - tail, n, p),
@@ -446,9 +510,9 @@ def prediction_band(
 def heldout_loglik(fit: ExposureFit, counts: pl.DataFrame, model: str) -> np.ndarray:
     """Log-likelihood of each row of `counts` (not used to fit) under
     `fit`'s "poisson" or "negbin" model -- the out-of-sample score that
-    cross-validation averages."""
+    cross-validation averages. `counts` needs every covariate of `fit`."""
     y = counts[fit.response].to_numpy().astype(float)
-    mu = fit.mu(model, counts["addresses"].to_numpy())
+    mu = fit.mu(model, counts)
     if model == "poisson":
         return stats.poisson.logpmf(y, mu)
     n, p = _nb_shape(mu, fit.alpha)

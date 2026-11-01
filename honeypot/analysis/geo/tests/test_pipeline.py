@@ -2,7 +2,12 @@
 from pathlib import Path
 
 from honeypot.analysis.geo.pipeline import run
-from honeypot.analysis.geo.tests.fixtures import world_events, write_world_dbip
+from honeypot.analysis.geo.tests.fixtures import (
+    world_events,
+    write_world_dbip,
+    write_world_indicators,
+    write_world_shapes,
+)
 
 
 def test_run_writes_every_table_and_chart(tmp_path: Path) -> None:
@@ -10,6 +15,8 @@ def test_run_writes_every_table_and_chart(tmp_path: Path) -> None:
     world_events().write_parquet(snapshot)
     enrichment_dir = tmp_path / "enrichment"
     write_world_dbip(enrichment_dir)
+    write_world_indicators(tmp_path / "worldbank")
+    write_world_shapes(tmp_path / "shapes")
     output_dir = tmp_path / "out"
 
     residuals = run(
@@ -19,6 +26,8 @@ def test_run_writes_every_table_and_chart(tmp_path: Path) -> None:
         enrichment_dir=enrichment_dir,
         n_boot=10,
         repeats=1,
+        worldbank_dir=tmp_path / "worldbank",
+        shapes_dir=tmp_path / "shapes",
     )
 
     assert residuals.height == 40
@@ -42,4 +51,13 @@ def test_run_writes_every_table_and_chart(tmp_path: Path) -> None:
         "bootstrap_summary.parquet",
         "cross_validation.parquet",
     }
-    assert len(list((output_dir / "charts").glob("*.png"))) == 9
+    assert {p.name for p in (output_dir / "covariates").iterdir()} == {
+        "country_counts_with_indicators.parquet",
+        "log_correlations.parquet",
+        "specifications.parquet",
+        "coefficients.parquet",
+        "cross_validation.parquet",
+        "country_residuals.parquet",
+        "residuals_vs_baseline.parquet",
+    }
+    assert len(list((output_dir / "charts").glob("*.png"))) == 10

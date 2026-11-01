@@ -37,6 +37,7 @@ test = [
     "networkx>=3.0",
     "scipy>=1.11.0",
     "statsmodels>=0.14.0",
+    "geopandas>=1.0.0",
     "google-cloud-bigquery>=3.25.0",
     # nbconvert + ipykernel: the notebook execution test needs a real
     # working Jupyter kernel, not just the flat modules importable.
@@ -61,6 +62,8 @@ analysis = [
     "scipy>=1.11.0",
     # Count regression (Poisson / negative binomial GLMs) for geo/.
     "statsmodels>=0.14.0",
+    # Country shapes for geo/'s choropleth maps.
+    "geopandas>=1.0.0",
     "google-cloud-bigquery>=3.25.0",
     "ipykernel>=6.29.0",
     # Standalone launcher (`uv run jupyter notebook`) so running the

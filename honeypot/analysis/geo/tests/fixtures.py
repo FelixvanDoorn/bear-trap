@@ -115,3 +115,71 @@ def world_events(seed: int = 0) -> pl.DataFrame:
             )
             rows.append(event)
     return make_events(rows)
+
+
+def write_world_indicators(worldbank_dir: Path, date: str = "2026-01-01") -> None:
+    """World Bank API responses for the synthetic world, in the cached
+    filename format so fetch_indicator never downloads. Internet users
+    grow with each country's address space (plus noise), GDP per capita is
+    unrelated noise. Includes one aggregate code and one null value, as
+    the real API does."""
+    import json
+
+    from honeypot.analysis.common.worldbank import INDICATORS
+
+    rng = np.random.default_rng(1)
+    worldbank_dir.mkdir(parents=True, exist_ok=True)
+    blocks = _world_blocks()
+    values = {
+        "gdp_per_capita": [float(rng.uniform(1e3, 8e4)) for _ in blocks],
+        "internet_share": [float(rng.uniform(20, 99)) for _ in blocks],
+        "population": [
+            float(size * 40 * np.exp(rng.normal(0, 0.5))) for _, _, size in blocks
+        ],
+    }
+    for name, code in INDICATORS.items():
+        rows = [
+            {
+                "country": {"id": country, "value": country},
+                "date": "2025",
+                "value": value,
+            }
+            for (country, _, _), value in zip(blocks, values[name])
+        ]
+        rows.append(
+            {
+                "country": {"id": "1A", "value": "Arab World"},
+                "date": "2025",
+                "value": 1.0,
+            }
+        )
+        rows.append(
+            {"country": {"id": "ZZ", "value": "Nowhere"}, "date": "2025", "value": None}
+        )
+        payload = [{"page": 1, "pages": 1, "total": len(rows)}, rows]
+        (worldbank_dir / f"{code}-{date}.json").write_text(json.dumps(payload))
+
+
+def write_world_shapes(shapes_dir: Path) -> None:
+    """A Natural Earth-shaped GeoJSON for the synthetic world: one square
+    per country on a grid, keyed by ISO_A2_EH, plus a "-99" shape that
+    load_country_shapes must drop."""
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from honeypot.analysis.geo.maps import SHAPES_BASENAME
+
+    shapes_dir.mkdir(parents=True, exist_ok=True)
+    codes = [country for country, _, _ in _world_blocks()] + ["-99"]
+    geometries = [
+        box(
+            -170 + (i % 10) * 34,
+            -60 + (i // 10) * 30,
+            -140 + (i % 10) * 34,
+            -35 + (i // 10) * 30,
+        )
+        for i in range(len(codes))
+    ]
+    gpd.GeoDataFrame(
+        {"ISO_A2_EH": codes, "ADMIN": codes}, geometry=geometries, crs="EPSG:4326"
+    ).to_file(shapes_dir / f"{SHAPES_BASENAME}.geojson", driver="GeoJSON")

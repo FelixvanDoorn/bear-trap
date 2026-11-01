@@ -38,11 +38,15 @@ def poisson_fit():
 
 
 class TestDesign:
-    def test_centered_log_with_optional_square(self) -> None:
-        addresses = np.array([np.e, np.e**3])
+    def test_centered_log_with_optional_square_and_covariates(self) -> None:
+        data = pl.DataFrame({"addresses": [np.e, np.e**3], "users": [1.0, np.e**2]})
+        centers = {"addresses": 2.0, "users": 1.0}
 
-        assert design(addresses, center=2.0).tolist() == [[1, -1], [1, 1]]
-        assert design(addresses, center=2.0, quadratic=True)[:, 2].tolist() == [1, 1]
+        assert design(data, centers).tolist() == [[1, -1], [1, 1]]
+        assert design(data, centers, quadratic=True)[:, 2].tolist() == [1, 1]
+        assert design(data, centers, covariates=("users",))[:, 2] == pytest.approx(
+            [-1, 1]
+        )
 
 
 class TestFit:
@@ -55,9 +59,7 @@ class TestFit:
         assert s["p_beta_eq_1"] < 0.001
 
     def test_mu_at_new_addresses_matches_fitted_rows(self, nb_fit) -> None:
-        assert nb_fit.mu("negbin", nb_fit.addresses) == pytest.approx(
-            nb_fit.mu("negbin")
-        )
+        assert nb_fit.mu("negbin", nb_fit.data) == pytest.approx(nb_fit.mu("negbin"))
 
 
 class TestOverdispersionChecks:
