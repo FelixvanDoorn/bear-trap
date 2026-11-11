@@ -3,8 +3,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from honeypot.analysis.ml.campaigns import CampaignConfig
-from honeypot.analysis.ml.pipeline import load_config, run
+from honeypot.analysis.ml.campaigns.clustering import CampaignConfig
+from honeypot.analysis.ml.campaigns.pipeline import load_config, run
 from honeypot.analysis.ml.runs import file_sha256, load_run
 from honeypot.analysis.ml.tests.fixtures import campaign_events, write_campaign_dbip
 

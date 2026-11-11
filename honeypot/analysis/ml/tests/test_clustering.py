@@ -3,7 +3,7 @@ import polars as pl
 import pytest
 from sklearn.metrics import adjusted_rand_score
 
-from honeypot.analysis.ml.campaigns import (
+from honeypot.analysis.ml.campaigns.clustering import (
     NOISE,
     CampaignConfig,
     Embedding,
@@ -20,7 +20,7 @@ from honeypot.analysis.ml.campaigns import (
     select_config,
     tune,
 )
-from honeypot.analysis.ml.features import ip_profiles
+from honeypot.analysis.ml.campaigns.profiles import ip_profiles
 from honeypot.analysis.ml.splits import assign_splits
 from honeypot.analysis.ml.tests.fixtures import CAMPAIGNS, campaign_events
 

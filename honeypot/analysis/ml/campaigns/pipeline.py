@@ -1,4 +1,4 @@
-# honeypot/analysis/ml/pipeline.py
+# honeypot/analysis/ml/campaigns/pipeline.py
 #
 # One versioned run of the campaign clustering (see runs.py for run ids,
 # layout and idempotency, campaigns.py for the method):
@@ -37,7 +37,15 @@ from honeypot.analysis.common.threatintel import (
     match_blocklists,
     read_blocklist,
 )
-from honeypot.analysis.ml.campaigns import (
+from honeypot.analysis.ml.campaigns.charts import (
+    plot_campaign_activity,
+    plot_campaign_map,
+    plot_campaign_profiles,
+    plot_campaign_sizes,
+    plot_external_agreement,
+    plot_tuning_curves,
+)
+from honeypot.analysis.ml.campaigns.clustering import (
     CampaignConfig,
     campaign_profiles,
     command_sequence_labels,
@@ -51,15 +59,7 @@ from honeypot.analysis.ml.campaigns import (
     tune,
     tuning_with_selection,
 )
-from honeypot.analysis.ml.charts import (
-    plot_campaign_activity,
-    plot_campaign_map,
-    plot_campaign_profiles,
-    plot_campaign_sizes,
-    plot_external_agreement,
-    plot_tuning_curves,
-)
-from honeypot.analysis.ml.features import ip_profiles
+from honeypot.analysis.ml.campaigns.profiles import ip_profiles
 from honeypot.analysis.ml.runs import RUNS_DIR, Run, RunResult, execute
 from honeypot.analysis.ml.splits import assign_splits, split_summary
 from honeypot.analysis.network.ai_targeting import ai_targeting_ips

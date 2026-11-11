@@ -87,7 +87,7 @@ def plot_client_fingerprint_breakdown(
 
 def _cluster_command_sequences(features: pl.DataFrame) -> pl.DataFrame:
     """Exact-match clusters of session command sequences (see
-    features._hash_commands), sorted by size descending. Sessions that ran
+    features.hash_commands), sorted by size descending. Sessions that ran
     an identical sequence -- same commands, same order -- share one row,
     carrying a representative `commands` list plus the cluster's session
     count. Singleton clusters (count == 1) are sessions with no match to a
@@ -143,7 +143,7 @@ def plot_command_sequence_clusters(
 
 def _cluster_telnet_options(features: pl.DataFrame) -> pl.DataFrame:
     """Exact-match clusters of session telnet option-negotiation sequences
-    (see features._hash_telnet_options) -- the telnet analogue of
+    (see features.hash_telnet_options) -- the telnet analogue of
     _cluster_command_sequences, since Cowrie never logs a telnet client
     version/banner the way it does for SSH. Sorted by size descending."""
     with_options = features.filter(pl.col("telnet_option_hash").is_not_null())

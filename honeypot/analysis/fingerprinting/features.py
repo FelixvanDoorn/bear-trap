@@ -52,11 +52,11 @@ def _parse_raw(raw_json: object) -> dict:
         return {}
 
 
-def _telnet_option_label(raw_json: object) -> str | None:
+def telnet_option_label(raw_json: object) -> str | None:
     """`cowrie.telnet.option` -> "<IAC command>:<option name>", e.g.
     "WILL:NAWS". Telnet has no version banner or kex exchange the way SSH
     does, so this ordered option-negotiation sequence is the closest
-    per-client analogue -- see _hash_telnet_options."""
+    per-client analogue -- see hash_telnet_options."""
     parsed = _parse_raw(raw_json)
     command = parsed.get("command")
     if command is None:
@@ -77,7 +77,7 @@ _IPV4 = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 _BUSYBOX_VERIFICATION_TAG = re.compile(r"^(?:/bin/busybox|busybox)\s+\S+$")
 
 
-def _normalize_command(command: str) -> str:
+def normalize_command(command: str) -> str:
     """Strip known per-connection noise that doesn't reflect a behaviorally
     different command, found by inspecting real singleton clusters:
     botnets append a random verification tag after `busybox` to confirm
@@ -89,7 +89,7 @@ def _normalize_command(command: str) -> str:
     return _IPV4.sub("<IP>", command)
 
 
-def _dedupe_consecutive(commands: list[str]) -> list[str]:
+def dedupe_consecutive(commands: list[str]) -> list[str]:
     """Collapse immediately-repeated commands (observed as pairs/runs of
     the same probe logged back to back, likely a retry/reconnect artifact)
     so that noise alone doesn't split an otherwise-identical sequence into
@@ -101,10 +101,10 @@ def _dedupe_consecutive(commands: list[str]) -> list[str]:
     return deduped
 
 
-def _hash_commands(commands: list[str]) -> str | None:
+def hash_commands(commands: list[str]) -> str | None:
     """Exact-match fingerprint of a session's *normalized* command
     sequence, so sessions replaying an identical playbook (same commands,
-    same order, modulo the noise _normalize_command/_dedupe_consecutive
+    same order, modulo the noise normalize_command/dedupe_consecutive
     strip) group under one hash. \x1f (ASCII unit separator) joins
     commands rather than a printable character, since attacker input could
     legitimately contain any printable separator and create false
@@ -112,21 +112,21 @@ def _hash_commands(commands: list[str]) -> str | None:
     distinct case from any real sequence, not just another hash value."""
     if not commands:
         return None
-    normalized = _dedupe_consecutive([_normalize_command(c) for c in commands])
+    normalized = dedupe_consecutive([normalize_command(c) for c in commands])
     return hashlib.sha256("\x1f".join(normalized).encode()).hexdigest()[:16]
 
 
-def _hash_telnet_options(options: list[str]) -> str | None:
+def hash_telnet_options(options: list[str]) -> str | None:
     """Fingerprint of a session's ordered telnet option-negotiation
-    sequence -- the telnet equivalent of _hash_commands/hassh. Consecutive
+    sequence -- the telnet equivalent of hash_commands/hassh. Consecutive
     repeats (e.g. NAWS renegotiated on a terminal resize) are collapsed
-    first, same reasoning as _dedupe_consecutive for commands: that's a
+    first, same reasoning as dedupe_consecutive for commands: that's a
     renegotiation artifact, not a distinct client. Returns None for zero
     options, same "nothing observed" vs. "real empty sequence" distinction
-    as _hash_commands."""
+    as hash_commands."""
     if not options:
         return None
-    deduped = _dedupe_consecutive(options)
+    deduped = dedupe_consecutive(options)
     return hashlib.sha256("\x1f".join(deduped).encode()).hexdigest()[:16]
 
 
@@ -165,7 +165,7 @@ def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
     telnet_options = [
         label
         for raw in telnet_option_rows["raw"].to_list()
-        if (label := _telnet_option_label(raw)) is not None
+        if (label := telnet_option_label(raw)) is not None
     ]
 
     exploit_rows = events.filter(pl.col("eventid") == "cowrie.telnet.exploit_attempt")
@@ -185,7 +185,7 @@ def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
         event_count=events.height,
         command_count=len(commands),
         commands=commands,
-        command_sequence_hash=_hash_commands(commands),
+        command_sequence_hash=hash_commands(commands),
         session_duration_ms=_first_non_null(events["duration_ms"]),
         inter_command_mean_s=inter_command_mean_s,
         inter_command_std_s=inter_command_std_s,
@@ -197,7 +197,7 @@ def _session_features(session_id: str, events: pl.DataFrame) -> SessionFeatures:
         is_ssh_client=client_version is not None and client_version.startswith("SSH-"),
         hassh=_raw_field(kex_raw, "hassh"),
         telnet_options=telnet_options,
-        telnet_option_hash=_hash_telnet_options(telnet_options),
+        telnet_option_hash=hash_telnet_options(telnet_options),
         has_exploit_attempt=has_exploit_attempt,
         exploit_cve=exploit_cve,
         username=_first_non_null(events["username"]),

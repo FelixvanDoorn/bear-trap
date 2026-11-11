@@ -2,10 +2,10 @@ import numpy as np
 import polars as pl
 import pytest
 
-from honeypot.analysis.ml.features import (
+from honeypot.analysis.ml.campaigns.profiles import (
     BEHAVIOUR_FEATURES,
     TOKEN_BLOCKS,
-    FeatureEncoder,
+    campaign_encoder,
     ip_profiles,
 )
 from honeypot.analysis.ml.tests.fixtures import CAMPAIGNS, campaign_events
@@ -58,7 +58,7 @@ def test_profiles_have_no_nulls_in_features(data) -> None:
 
 def test_encoder_blocks_and_unit_norm(data) -> None:
     profiles, _ = data
-    encoder = FeatureEncoder().fit(profiles)
+    encoder = campaign_encoder().fit(profiles)
     matrix = encoder.transform(profiles)
 
     slices = encoder.block_slices()
@@ -76,7 +76,7 @@ def test_encoder_blocks_and_unit_norm(data) -> None:
 def test_encoder_learns_vocabulary_from_training_rows_only(data) -> None:
     profiles, _ = data
     train = profiles.filter(pl.col("campaign") != "ssh_dropper")
-    encoder = FeatureEncoder().fit(train)
+    encoder = campaign_encoder().fit(train)
     names = encoder.feature_names()
     assert not any("SSH-2.0-Go" in name for name in names)
     assert not any("pair=sd" in name for name in names)
@@ -90,7 +90,7 @@ def test_encoder_learns_vocabulary_from_training_rows_only(data) -> None:
 
 def test_zero_weight_drops_a_block(data) -> None:
     profiles, _ = data
-    encoder = FeatureEncoder(
+    encoder = campaign_encoder(
         weights={"credentials": 0, "commands": 1, "client": 1, "behaviour": 1}
     ).fit(profiles)
     assert "credentials" not in encoder.block_slices()
