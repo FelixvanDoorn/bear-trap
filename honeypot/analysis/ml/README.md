@@ -16,15 +16,24 @@ reproducible.
 
 ## What's in it
 
+Shared by the ml experiments (this one, and the supervised half to come):
+
 - `runs.py`: versioned, idempotent runs (below).
-- `features.py`: one row per IP with a login attempt (`ip_profiles`), and
-  `FeatureEncoder`, which turns them into a sparse matrix of four
-  equally weighted blocks (credentials, commands, client, behaviour).
 - `splits.py`: train / validation / test, grouped by ASN.
-- `campaigns.py`: embedding (TF-IDF + truncated SVD), k-means / Ward /
+- `tokens.py`: per-session credential, command and client tokens.
+- `encoding.py`: `FeatureEncoder`, token lists and numbers -> one sparse
+  matrix of weighted blocks, fit on training rows only.
+- `plotting.py`: chart palette and byte-stable PNGs.
+
+The campaign clustering, in `campaigns/`:
+
+- `profiles.py`: one row per IP with a login attempt (`ip_profiles`), and
+  `campaign_encoder()`: four equally weighted blocks (credentials,
+  commands, client, behaviour).
+- `clustering.py`: embedding (TF-IDF + truncated SVD), k-means / Ward /
   HDBSCAN, tuning, selection, test evaluation, external agreement and the
   campaign catalog.
-- `charts.py`, `pipeline.py`, `notebooks/campaigns.ipynb`.
+- `charts.py`, `pipeline.py`, and `notebooks/campaigns.ipynb`.
 
 ## Method
 
@@ -36,7 +45,7 @@ same tooling. The 4,844 IPs that tried to log in are clustered; the 5,793
 that only connected (scanners) carry almost no behaviour and are only
 counted.
 
-**Features** (`features.py`), per IP:
+**Features** (`campaigns/profiles.py`), per IP:
 
 | block | content | encoding |
 |---|---|---|
@@ -207,7 +216,7 @@ What stands out:
 ```sh
 # From the repo root.
 uv sync --group test --group analysis
-PYTHONPATH=. uv run python -m honeypot.analysis.ml.pipeline   # --config grid.json, --seed, --force, --mode live
+PYTHONPATH=. uv run python -m honeypot.analysis.ml.campaigns.pipeline   # --config grid.json, --seed, --force, --mode live
 ```
 
 `--config` takes a JSON file overriding any `CampaignConfig` field, e.g.

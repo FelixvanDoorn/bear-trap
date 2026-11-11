@@ -6,7 +6,7 @@
 # written to a temp runs dir, never the real run history.
 from pathlib import Path
 
-from honeypot.analysis.ml.tests.test_pipeline import write_campaign_inputs
+from honeypot.analysis.ml.tests.test_campaigns_pipeline import write_campaign_inputs
 from honeypot.analysis.network.tests.test_notebook import _errors, _run_notebook
 
 NOTEBOOK_PATH = Path(__file__).parent.parent / "notebooks" / "campaigns.ipynb"

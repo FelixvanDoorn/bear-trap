@@ -1,4 +1,4 @@
-# honeypot/analysis/ml/campaigns.py
+# honeypot/analysis/ml/campaigns/clustering.py
 #
 # Campaign clustering of attacking IPs (DDS ch. 9, unsupervised), with
 # hyperparameters chosen on a validation split and the result reported
@@ -6,7 +6,7 @@
 #
 # Pipeline per configuration:
 #
-#   profiles --FeatureEncoder--> sparse TF-IDF + behaviour (features.py)
+#   profiles --FeatureEncoder--> sparse TF-IDF + behaviour (profiles.py)
 #            --TruncatedSVD + L2 normalize--> dense embedding (LSA: on unit
 #              vectors, Euclidean distance ranks pairs like cosine)
 #            --k-means | Ward | HDBSCAN--> cluster labels (-1 = noise)
@@ -64,12 +64,9 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import normalize
 
-from honeypot.analysis.fingerprinting.features import _hash_commands
-from honeypot.analysis.ml.features import (
-    BLOCK_WEIGHTS,
-    DEFAULT_MIN_DF,
-    FeatureEncoder,
-)
+from honeypot.analysis.fingerprinting.features import hash_commands
+from honeypot.analysis.ml.campaigns.profiles import BLOCK_WEIGHTS, campaign_encoder
+from honeypot.analysis.ml.encoding import DEFAULT_MIN_DF, FeatureEncoder
 from honeypot.analysis.ml.splits import DEFAULT_FRACTIONS
 from honeypot.analysis.network.graph import (
     assign_clusters,
@@ -147,7 +144,7 @@ class Embedding:
     svd: TruncatedSVD | None = None
 
     def fit(self, profiles: pl.DataFrame) -> "Embedding":
-        self.encoder = FeatureEncoder(self.block_weights, self.min_df).fit(profiles)
+        self.encoder = campaign_encoder(self.block_weights, self.min_df).fit(profiles)
         matrix = self.encoder.transform(profiles)
         n = min(self.n_components, matrix.shape[1] - 1, matrix.shape[0] - 1)
         self.svd = TruncatedSVD(n, random_state=self.seed).fit(matrix)
@@ -386,7 +383,7 @@ def command_sequence_labels(events: pl.DataFrame) -> pl.DataFrame:
     )
     hashes = pl.DataFrame(
         [
-            {"src_ip": src_ip, "label": _hash_commands(commands)}
+            {"src_ip": src_ip, "label": hash_commands(commands)}
             for src_ip, commands in sessions.select(
                 "src_ip", "command_input"
             ).iter_rows()

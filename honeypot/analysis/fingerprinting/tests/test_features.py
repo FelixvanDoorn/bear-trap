@@ -371,7 +371,7 @@ class TestCommandSequenceHash:
         self,
     ) -> None:
         # ["ab", "c"] and ["a", "bc"] would join to the same string with no
-        # separator -- the \x1f join in _hash_commands must keep them apart.
+        # separator -- the \x1f join in hash_commands must keep them apart.
         events = pl.DataFrame(
             [
                 _event(

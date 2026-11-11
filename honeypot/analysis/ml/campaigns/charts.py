@@ -1,21 +1,17 @@
-# honeypot/analysis/ml/charts.py
+# honeypot/analysis/ml/campaigns/charts.py
 #
-# Charts for the campaign clustering. Seaborn on matplotlib's headless Agg
-# backend, styled per chart via _style() like geo/charts.py, so importing
-# this module never restyles anything else. Each function writes one PNG
-# into `output_dir` (a run's charts/ directory) and returns its path;
-# with the same inputs the PNG is byte-identical, so a rerun of the same
-# run id reproduces its charts exactly.
+# Charts for the campaign clustering, with ml/plotting.py's styling
+# (headless Agg, per-chart style, byte-stable PNGs). Each function writes
+# one PNG into `output_dir` (a run's charts/ directory) and returns its
+# path.
 #
 # Color by job: campaign identity uses the fixed categorical slots in
 # order (campaign 0 = slot 1, ..., the 8 largest), everything else is
-# neutral gray "other"; three of the slots are below 3:1 contrast on white,
-# so the map labels every colored campaign directly and the catalog table
-# is the table view. Magnitudes (active IPs, shares) use one sequential
+# neutral gray "other"; the map labels every colored campaign directly
+# (three slots are below 3:1 contrast) and the catalog table is the table
+# view. Magnitudes (active IPs, shares) use one sequential
 # blue ramp. Hyperparameter series (SVD dimensions) take the first three
 # slots, with a legend.
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 import matplotlib
@@ -28,25 +24,18 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 import seaborn as sns  # noqa: E402
-from matplotlib.colors import LinearSegmentedColormap, LogNorm  # noqa: E402
+from matplotlib.colors import LogNorm  # noqa: E402
 
-from honeypot.analysis.ml.campaigns import ALGORITHMS, NOISE  # noqa: E402
+from honeypot.analysis.ml.campaigns.clustering import ALGORITHMS, NOISE  # noqa: E402
+from honeypot.analysis.ml.plotting import (  # noqa: E402
+    CATEGORICAL,
+    INK,
+    NEUTRAL,
+    SEQUENTIAL,
+    save,
+    style,
+)
 
-CATEGORICAL = (
-    "#2a78d6",
-    "#eb6834",
-    "#1baf7a",
-    "#eda100",
-    "#e87ba4",
-    "#008300",
-    "#6250d6",
-    "#e34948",
-)
-_NEUTRAL = "#c9c7c1"
-_INK = "#52514e"
-_SEQUENTIAL = LinearSegmentedColormap.from_list(
-    "blues", ["#f4f8fd", "#9ec5f4", "#3987e5", "#1c5cab", "#0d366b"]
-)
 _PARAM_LABELS = {
     "kmeans": "k",
     "ward": "k",
@@ -54,24 +43,9 @@ _PARAM_LABELS = {
 }
 
 
-@contextmanager
-def _style() -> Iterator[None]:
-    with sns.axes_style("whitegrid"), sns.plotting_context("notebook"):
-        yield
-
-
-def _save(fig: plt.Figure, output_dir: Path, name: str) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / name
-    # No "Software" tag: the PNG depends only on what's drawn.
-    fig.savefig(path, bbox_inches="tight", dpi=110, metadata={"Software": None})
-    plt.close(fig)
-    return path
-
-
 def campaign_color(campaign: int) -> str:
     """Slot color for the 8 largest campaigns (ids 0-7), gray otherwise."""
-    return CATEGORICAL[campaign] if 0 <= campaign < len(CATEGORICAL) else _NEUTRAL
+    return CATEGORICAL[campaign] if 0 <= campaign < len(CATEGORICAL) else NEUTRAL
 
 
 def plot_tuning_curves(
@@ -82,7 +56,7 @@ def plot_tuning_curves(
     parameter, one line per SVD dimension count. The chosen config is
     ringed; the dashed line is the eligibility threshold."""
     dims = sorted(tuning["n_components"].unique().to_list())
-    with _style():
+    with style():
         fig, axes = plt.subplots(
             2, len(ALGORITHMS), figsize=(12, 6.5), sharey="row", squeeze=False
         )
@@ -114,14 +88,14 @@ def plot_tuning_curves(
                         chosen[metric],
                         s=220,
                         facecolor="none",
-                        edgecolor=_INK,
+                        edgecolor=INK,
                         linewidth=2,
                         zorder=4,
                         label="chosen",
                     )
                 if row == 0:
                     ax.axhline(
-                        min_prediction_strength, color=_INK, lw=1, ls="--", zorder=1
+                        min_prediction_strength, color=INK, lw=1, ls="--", zorder=1
                     )
                     ax.set_title(algorithm)
                 ax.set_xlabel(_PARAM_LABELS[algorithm] if row == 1 else "")
@@ -143,7 +117,7 @@ def plot_tuning_curves(
             ncol=len(labels),
             frameon=False,
         )
-        return _save(fig, output_dir, "tuning_curves.png")
+        return save(fig, output_dir, "tuning_curves.png")
 
 
 def plot_campaign_map(
@@ -152,7 +126,7 @@ def plot_campaign_map(
     """t-SNE map of every clustered IP, the 8 largest campaigns colored
     and labeled at their median position, the rest gray."""
     campaigns = np.asarray(campaigns)
-    with _style():
+    with style():
         fig, ax = plt.subplots(figsize=(8, 7))
         colors = [campaign_color(int(c)) for c in campaigns]
         order = np.argsort([c < len(CATEGORICAL) and c != NOISE for c in campaigns])
@@ -176,7 +150,7 @@ def plot_campaign_map(
                 va="center",
                 fontsize=10,
                 fontweight="bold",
-                color=_INK,
+                color=INK,
                 bbox={
                     "boxstyle": "round,pad=0.25",
                     "facecolor": "white",
@@ -184,7 +158,7 @@ def plot_campaign_map(
                     "linewidth": 2,
                 },
             )
-        ax.scatter([], [], s=30, color=_NEUTRAL, label="smaller campaigns / noise")
+        ax.scatter([], [], s=30, color=NEUTRAL, label="smaller campaigns / noise")
         for campaign in range(min(len(CATEGORICAL), int(campaigns.max()) + 1)):
             ax.scatter(
                 [],
@@ -200,7 +174,7 @@ def plot_campaign_map(
             title="Attacking IPs by campaign (t-SNE map; distances only local)",
         )
         ax.grid(False)
-        return _save(fig, output_dir, "campaign_map.png")
+        return save(fig, output_dir, "campaign_map.png")
 
 
 def plot_campaign_sizes(catalog: pl.DataFrame, output_dir: Path) -> Path:
@@ -208,7 +182,7 @@ def plot_campaign_sizes(catalog: pl.DataFrame, output_dir: Path) -> Path:
     held-out test reproducibility; campaigns below 0.8 are flagged in the
     label and drawn gray."""
     rows = catalog.filter(pl.col("campaign") != NOISE).sort("campaign")
-    with _style():
+    with style():
         fig, ax = plt.subplots(figsize=(8, 0.42 * rows.height + 1.5))
         y = np.arange(rows.height)
         scores = rows["test_reproducibility"].to_list()
@@ -216,7 +190,7 @@ def plot_campaign_sizes(catalog: pl.DataFrame, output_dir: Path) -> Path:
         ax.barh(
             y,
             rows["ips"],
-            color=[_NEUTRAL if flag else CATEGORICAL[0] for flag in flagged],
+            color=[NEUTRAL if flag else CATEGORICAL[0] for flag in flagged],
             height=0.6,
         )
         for yi, ips, score, flag in zip(y, rows["ips"], scores, flagged):
@@ -229,13 +203,13 @@ def plot_campaign_sizes(catalog: pl.DataFrame, output_dir: Path) -> Path:
                 xytext=(6, -4),
                 textcoords="offset points",
                 fontsize=9,
-                color=_INK,
+                color=INK,
             )
         ax.set_yticks(y, [f"campaign {c}" for c in rows["campaign"]])
         ax.invert_yaxis()
         ax.set_xlim(0, float(rows["ips"].max()) * 1.45)
         ax.set(xlabel="attacking IPs", title="Campaign sizes and test reproducibility")
-        return _save(fig, output_dir, "campaign_sizes.png")
+        return save(fig, output_dir, "campaign_sizes.png")
 
 
 def plot_campaign_activity(activity: pl.DataFrame, output_dir: Path) -> Path:
@@ -248,7 +222,7 @@ def plot_campaign_activity(activity: pl.DataFrame, output_dir: Path) -> Path:
         .fill_null(0)
     )
     days = pivot.columns[1:]
-    with _style():
+    with style():
         fig, ax = plt.subplots(figsize=(12, 0.4 * pivot.height + 2))
         values = pivot.select(days).to_numpy().astype(float)
         # Log scale: one campaign's burst (hundreds of IPs a day) would
@@ -256,7 +230,7 @@ def plot_campaign_activity(activity: pl.DataFrame, output_dir: Path) -> Path:
         sns.heatmap(
             values,
             ax=ax,
-            cmap=_SEQUENTIAL,
+            cmap=SEQUENTIAL,
             norm=LogNorm(vmin=1, vmax=max(values.max(), 2)),
             mask=values == 0,
             linewidths=1,
@@ -274,7 +248,7 @@ def plot_campaign_activity(activity: pl.DataFrame, output_dir: Path) -> Path:
             np.arange(0, len(days), step) + 0.5, days[::step], rotation=45, ha="right"
         )
         ax.set(xlabel="", title="When each campaign was active")
-        return _save(fig, output_dir, "campaign_activity.png")
+        return save(fig, output_dir, "campaign_activity.png")
 
 
 _REFERENCE_LABELS = {
@@ -294,12 +268,12 @@ def plot_campaign_profiles(catalog: pl.DataFrame, output_dir: Path) -> Path:
     """Heatmap of behavioural shares per campaign, annotated with values."""
     columns = [c for c in _PROFILE_COLUMNS if c in catalog.columns]
     rows = catalog.filter(pl.col("campaign") != NOISE).sort("campaign")
-    with _style():
+    with style():
         fig, ax = plt.subplots(figsize=(1.4 * len(columns) + 3, 0.4 * rows.height + 2))
         sns.heatmap(
             rows.select(columns).to_numpy(),
             ax=ax,
-            cmap=_SEQUENTIAL,
+            cmap=SEQUENTIAL,
             vmin=0,
             vmax=1,
             annot=True,
@@ -321,7 +295,7 @@ def plot_campaign_profiles(catalog: pl.DataFrame, output_dir: Path) -> Path:
             rotation=0,
         )
         ax.set_title("What each campaign does")
-        return _save(fig, output_dir, "campaign_profiles.png")
+        return save(fig, output_dir, "campaign_profiles.png")
 
 
 def plot_external_agreement(agreement: pl.DataFrame, output_dir: Path) -> Path:
@@ -329,7 +303,7 @@ def plot_external_agreement(agreement: pl.DataFrame, output_dir: Path) -> Path:
     links (same label) that also share a campaign, and the ARI between the
     two partitions."""
     rows = agreement.drop_nulls("linked_kept_together")
-    with _style():
+    with style():
         fig, ax = plt.subplots(figsize=(8, 0.8 * max(rows.height, 1) + 1.8))
         y = np.arange(rows.height)
         for offset, (metric, label, slot) in zip(
@@ -353,7 +327,7 @@ def plot_external_agreement(agreement: pl.DataFrame, output_dir: Path) -> Path:
                     xytext=(5, -4),
                     textcoords="offset points",
                     fontsize=9,
-                    color=_INK,
+                    color=INK,
                 )
         ax.set_yticks(
             y,
@@ -377,4 +351,4 @@ def plot_external_agreement(agreement: pl.DataFrame, output_dir: Path) -> Path:
             ncol=2,
             fontsize=9,
         )
-        return _save(fig, output_dir, "external_agreement.png")
+        return save(fig, output_dir, "external_agreement.png")
