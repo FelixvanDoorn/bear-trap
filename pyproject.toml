@@ -39,6 +39,8 @@ test = [
     "statsmodels>=0.14.0",
     "geopandas>=1.0.0",
     "scikit-learn>=1.5.0",
+    "imbalanced-learn>=0.14.0",
+    "joblib>=1.3.0",
     "google-cloud-bigquery>=3.25.0",
     # nbconvert + ipykernel: the notebook execution test needs a real
     # working Jupyter kernel, not just the flat modules importable.
@@ -68,6 +70,12 @@ analysis = [
     # Clustering, TF-IDF and SVD for ml/'s campaign clustering (HDBSCAN is
     # in sklearn.cluster since 1.3, so no separate hdbscan package).
     "scikit-learn>=1.5.0",
+    # Resampling inside cross-validation folds (undersampling, SMOTE) for
+    # ml/payload's imbalance strategies; 0.14 supports scikit-learn 1.9.
+    "imbalanced-learn>=0.14.0",
+    # Saving trained models as run artifacts (ml/runs.py); also a
+    # scikit-learn dependency, listed because ml/ imports it directly.
+    "joblib>=1.3.0",
     "google-cloud-bigquery>=3.25.0",
     "ipykernel>=6.29.0",
     # Standalone launcher (`uv run jupyter notebook`) so running the

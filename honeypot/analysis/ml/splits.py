@@ -14,9 +14,25 @@
 # the fractions hold for groups, not IPs: with 1,568 ASNs and the largest
 # holding 4.7% of the IPs (2026-09-16 snapshot), the realized IP shares
 # vary by a few points around the target (split_summary reports them).
+#
+# For the supervised experiment, three more pieces:
+#
+# - time_split: test = everything from a cut-off day on (by default the
+#   last `test_days` days), train = everything before. A model is only
+#   ever used on sessions after the ones it learned from, so that's how
+#   it's tested.
+# - group_folds: cross-validation folds inside train, grouped (no group
+#   in two folds) and stratified (each fold gets about the same share of
+#   positives -- with 3% positives, an unlucky fold could otherwise hold
+#   almost none).
+# - cold_start: the test rows whose group never appears in train -- the
+#   "network it has never seen" subset.
+import datetime as dt
 import hashlib
 
+import numpy as np
 import polars as pl
+from sklearn.model_selection import StratifiedGroupKFold
 
 SPLITS = ("train", "validation", "test")
 DEFAULT_FRACTIONS = {"train": 0.6, "validation": 0.2, "test": 0.2}
@@ -76,3 +92,37 @@ def split_summary(split_profiles: pl.DataFrame) -> pl.DataFrame:
         .sort("order")
         .drop("order")
     )
+
+
+def last_days_start(starts: pl.Series, test_days: int) -> dt.datetime:
+    """Midnight (UTC) starting the last `test_days` calendar days of
+    `starts`."""
+    last_day = starts.max().replace(hour=0, minute=0, second=0, microsecond=0)
+    return last_day - dt.timedelta(days=test_days - 1)
+
+
+def time_split(starts: pl.Series, test_start: dt.datetime) -> pl.Series:
+    """ "test" from `test_start` on, "train" before."""
+    return pl.Series(
+        "split", np.where((starts >= test_start).to_numpy(), "test", "train")
+    )
+
+
+def group_folds(
+    groups: pl.Series, labels: pl.Series, n_folds: int, seed: int
+) -> np.ndarray:
+    """Fold index (0 .. n_folds - 1) per row: grouped, stratified by
+    `labels`, deterministic for a seed."""
+    folds = np.empty(len(groups), dtype=np.int64)
+    splitter = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    dummy = np.zeros(len(groups))
+    for fold, (_, held_out) in enumerate(
+        splitter.split(dummy, labels.to_numpy(), groups.to_numpy())
+    ):
+        folds[held_out] = fold
+    return folds
+
+
+def cold_start(test_groups: pl.Series, train_groups: pl.Series) -> pl.Series:
+    """True for test rows whose group never occurs in train."""
+    return ~test_groups.is_in(train_groups.unique().implode()).alias("cold_start")

@@ -1,7 +1,18 @@
+import datetime as dt
+
+import numpy as np
 import polars as pl
 import pytest
 
-from honeypot.analysis.ml.splits import SPLITS, assign_splits, split_summary
+from honeypot.analysis.ml.splits import (
+    SPLITS,
+    assign_splits,
+    cold_start,
+    group_folds,
+    last_days_start,
+    split_summary,
+    time_split,
+)
 
 
 def _profiles(n_asns: int = 400, ips_per_asn: int = 3) -> pl.DataFrame:
@@ -51,3 +62,31 @@ def test_adding_rows_keeps_existing_assignments() -> None:
 def test_rejects_bad_fractions() -> None:
     with pytest.raises(ValueError):
         assign_splits(_profiles(), fractions={"train": 0.5, "test": 0.5})
+
+
+def test_time_split_cuts_at_midnight_of_the_last_days() -> None:
+    starts = pl.Series(
+        [dt.datetime(2026, 9, day, 23, tzinfo=dt.UTC) for day in range(1, 17)]
+    )
+    test_start = last_days_start(starts, test_days=7)
+    assert test_start == dt.datetime(2026, 9, 10, tzinfo=dt.UTC)
+    split = time_split(starts, test_start)
+    assert split.to_list() == ["train"] * 9 + ["test"] * 7
+
+
+def test_group_folds_grouped_stratified_deterministic() -> None:
+    rng = np.random.default_rng(0)
+    groups = pl.Series([f"AS{g}" for g in rng.integers(0, 200, 4000)])
+    labels = pl.Series(rng.random(4000) < 0.05)
+    folds = group_folds(groups, labels, n_folds=5, seed=0)
+    assert np.array_equal(folds, group_folds(groups, labels, n_folds=5, seed=0))
+    frame = pl.DataFrame({"group": groups, "y": labels, "fold": folds})
+    assert frame.group_by("group").agg(pl.col("fold").n_unique()).max()[0, 1] == 1
+    rates = frame.group_by("fold").agg(pl.col("y").mean())["y"]
+    assert set(frame["fold"].unique().to_list()) == set(range(5))
+    assert rates.max() - rates.min() < 0.03
+
+
+def test_cold_start_marks_unseen_groups() -> None:
+    mask = cold_start(pl.Series(["AS1", "AS2", "AS3"]), pl.Series(["AS2", "AS9"]))
+    assert mask.to_list() == [True, False, True]
