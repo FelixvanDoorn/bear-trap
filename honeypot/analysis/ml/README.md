@@ -43,6 +43,7 @@ id.
 ```
 ml/outputs/runs/
   campaigns/ | payload_drop/   one directory per experiment
+  payload_scoring/             scoring runs: frozen models on a snapshot
     index.parquet, index.csv   one row per finished run: metrics + config
     <run_id>/
       config.json              the config exactly as hashed
@@ -83,7 +84,8 @@ ml/outputs/runs/
 # From the repo root.
 uv sync --group test --group analysis
 PYTHONPATH=. uv run python -m honeypot.analysis.ml.campaigns.pipeline   # ~1 min
-PYTHONPATH=. uv run python -m honeypot.analysis.ml.payload.pipeline     # ~15 min
+PYTHONPATH=. uv run python -m honeypot.analysis.ml.payload.pipeline     # ~10 min
+PYTHONPATH=. uv run python -m honeypot.analysis.ml.payload.score --model-run <run_id>
 # both: --config overrides.json, --seed, --force, --mode live
 ```
 
@@ -114,7 +116,8 @@ positive class for the supervised tests. Per module:
   only, resampling only in fit, the paired selection rule, thresholds,
   evaluation and bootstrap, the pipeline end to end (saved models score
   `horizon_rows`, never trained on the test week, byte-identical forced
-  reruns, the campaign breakdown).
+  reruns, the campaign breakdown); scoring with frozen models reproduces
+  the training run's test week exactly and pins the model files it used.
 
 `test_notebook.py` and `test_payload_notebook.py` run both notebooks end
 to end on the fixture, writing their runs to a temp directory.

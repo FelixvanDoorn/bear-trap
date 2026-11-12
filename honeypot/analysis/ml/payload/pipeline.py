@@ -124,9 +124,11 @@ def campaign_assignments(snapshot: Path, campaigns_dir: Path) -> Path | None:
     return max(found)[1] if found else None
 
 
-def _sessions(
+def enriched_sessions(
     events: pl.DataFrame, country_ranges: pl.DataFrame, asn_ranges: pl.DataFrame
 ) -> pl.DataFrame:
+    """session_table plus DB-IP country / AS name and the ASN split group:
+    the session frame horizon_rows expects (training and scoring alike)."""
     sessions = session_table(events)
     enriched = sessions.join(
         enrich_ips(sessions.select("src_ip").unique(), country_ranges, asn_ranges),
@@ -258,7 +260,7 @@ def _payload_body(
     campaigns: pl.DataFrame | None,
 ) -> Any:
     def body(run: Run) -> None:
-        sessions = _sessions(events, country_ranges, asn_ranges)
+        sessions = enriched_sessions(events, country_ranges, asn_ranges)
         test_start = last_days_start(sessions["start"], config.test_days)
         run.log(
             f"{sessions.height} sessions with a login, {sessions['dropped'].sum()} "

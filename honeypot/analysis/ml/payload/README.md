@@ -19,6 +19,7 @@ last week. Every run is versioned and saves its trained models.
 - `evaluation.py`: the test week -- metrics with group-bootstrap
   intervals, PR curves, calibration, errors by campaign.
 - `charts.py`, `pipeline.py`, and `../notebooks/payload_drop.ipynb`.
+- `score.py`: batch scoring with a finished run's frozen models (below).
 
 ## Method
 
@@ -81,8 +82,14 @@ natural strategy (class weights where supported); stage B runs each
 model's best parameters with the other strategies.
 
 **Selection**: the best mean PR-AUC; candidates whose mean fold-by-fold
-shortfall from it is within one standard error count as tied, and the
-simplest tied model wins. Paired, because positives cluster in a few
+shortfall from it is within one standard error count as tied; the
+simplest tied model wins, and among its variants the best calibrated
+(lowest mean Brier score). Within a tie PR-AUC differences are noise by
+construction, calibration differences are not, and a calibrated model's
+score reads as a probability. (Run `27ca55659c0a` broke ties on the
+higher PR-AUC instead; the calibration tie-break was adopted after its
+test week had been seen, so that run stays the record of the original
+rule.) Paired, because positives cluster in a few
 ASNs and the folds swing all candidates together (the majority baseline
 alone ranges 0.05-0.35 across folds at *k* = 2); judged on each
 candidate's own spread, 23 of 41 candidates tied at *k* = 2. The decision
@@ -164,6 +171,50 @@ What stands out:
   include rarer campaigns. The CIs overlap; one good week is not a
   guarantee.
 
+## The calibration tie-break (run `b4e0f927e571`)
+
+The same data and grid, with ties broken on the Brier score:
+
+| *k* | chosen | CV PR-AUC | CV Brier | test PR-AUC (was) | test Brier (was) | cold-start Brier (was) |
+|---|---|---|---|---|---|---|
+| 0 | logistic, C = 10, class weights | 0.735 | 0.038 | 0.879 (0.893) | 0.0059 (0.0096) | 0.065 (0.112) |
+| 1 | logistic, C = 1, no reweighting | 0.895 | 0.016 | 0.927 (0.934) | 0.0036 (0.0063) | 0.036 (0.140) |
+| 2 | naive Bayes, alpha 0.1, SMOTE | 0.926 | 0.149 | 0.951 (0.939) | 0.044 (0.062) | 0.130 (0.208) |
+
+Ranking moves within its intervals both ways, as it should between tied
+candidates; Brier drops by a third to three quarters everywhere, most on
+unseen networks. Precision / recall at the max-F1 threshold barely move
+(k = 0: 0.81 / 0.78, k = 1: 0.98 / 0.79, k = 2: 0.93 / 0.88). At *k* = 2
+the tie still goes to naive Bayes (simplicity comes first), whose scores
+saturate (threshold 0.99996) and stay poorly calibrated: read its
+threshold, not its score. This run's test week was the second look at
+the same week, so it confirms the rule change did no harm; it is not a
+fresh estimate.
+
+## Scoring with frozen models (`score.py`)
+
+A scoring run loads a finished payload_drop run's saved models, pinned by
+run id, and scores a snapshot without refitting anything: per-session
+scores and flags at the saved thresholds, the test metrics above when the
+snapshot holds labels for both classes, and **vocabulary drift** (the
+share of tokens the frozen encoder never saw, which it scores as absent).
+The run id hashes the snapshot, the DB-IP files and every model file used.
+
+Sessions are scored from `since` on, by default the end of the models'
+training window. On the training snapshot that is the test week, and the
+scoring run reproduces the training run's test metrics exactly (tested on
+the fixture; on `b4e0f927e571`, run `1e1408534c51`). The honeypot no
+longer collects, so there are no later weeks to score yet; with a new
+snapshot this is the prospective test. Login-stage drift on the test week
+already shows the weak spot: 32% of credential-token occurrences are
+pairs the encoder never saw (brute-force dictionaries are long-tailed and
+`min_df` = 5 drops rare pairs), against 2-4% for client and network
+tokens.
+
+Offline this is evaluation, not early warning: the sessions have already
+happened. Acting before the payload arrives means scoring live, next to
+Cowrie.
+
 ## Caveats
 
 - **The label is an attempt, not an infection**, and telnet dominates it.
@@ -174,9 +225,11 @@ What stands out:
   runs several ASNs (GoDaddy, DigitalOcean): grouped folds don't separate
   those. The cold-start view is the check, and it is weaker after the
   first commands.
-- **Probabilities run high.** The chosen models were trained with class
-  weights or undersampling, and sit below the diagonal in the calibration
-  plot: act on the threshold, not on the raw score.
+- **Probabilities run high** in run `27ca55659c0a`: its chosen models
+  were trained with class weights or undersampling and sit below the
+  diagonal in the calibration plot. The calibration tie-break halves the
+  Brier score, but naive Bayes at *k* = 2 still saturates: act on the
+  threshold, not on the raw score.
 - **One accidental look at the test week.** While sizing the model grid,
   a timing script fit default-parameter models on the training weeks and
   scored them on the test week, before any selection code existed. No
@@ -190,6 +243,8 @@ What stands out:
 # From the repo root (runs the campaigns pipeline first for the
 # per-campaign error breakdown).
 PYTHONPATH=. uv run python -m honeypot.analysis.ml.payload.pipeline   # --config overrides.json, --seed, --force, --mode live
+# Score a snapshot with a finished run's frozen models (~20 s).
+PYTHONPATH=. uv run python -m honeypot.analysis.ml.payload.score --model-run b4e0f927e571   # --snapshot, --since, --horizons, --force
 ```
 
 About 10 minutes. `--config` takes a JSON file overriding any
