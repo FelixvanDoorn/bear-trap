@@ -1,8 +1,9 @@
 # honeypot/analysis/ml/runs.py
 #
 # Versioned, idempotent pipeline runs. Every run writes into its own
-# directory under RUNS_DIR, named by a run id that is a hash of everything
-# that determines its result:
+# directory under its experiment's directory (experiment_dir(): RUNS_DIR /
+# "campaigns", RUNS_DIR / "payload_drop", ...), named by a run id that is
+# a hash of everything that determines its result:
 #
 #   - the config (canonical JSON: sorted keys, no whitespace),
 #   - the content of every input file (sha256),
@@ -23,10 +24,17 @@
 #   <run_id>/metrics.json    headline numbers, flattened into the index
 #   <run_id>/run.log         progress messages
 #   <run_id>/tables/*.parquet, <run_id>/charts/*.png
+#   <run_id>/models/<name>.joblib + <name>.json   trained models
+#                            (Run.save_model) and their metadata; the
+#                            sha256 of each is in the manifest too
 #
-# index.parquet / index.csv in RUNS_DIR, one row per finished run, are
-# rebuilt from the run directories after every run rather than appended
-# to, so they can't drift from what's on disk.
+# index.parquet / index.csv in an experiment's directory, one row per
+# finished run, are rebuilt from the run directories after every run
+# rather than appended to, so they can't drift from what's on disk.
+#
+# Models are pickles (joblib), and unpickling runs code: load_model only
+# loads a file whose sha256 matches both its metadata and the manifest of
+# a finished run, i.e. a model this code wrote, unchanged since.
 import datetime as dt
 import hashlib
 import json
@@ -40,6 +48,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+import joblib
 import polars as pl
 
 ANALYSIS_DIR = Path(__file__).parent.parent
@@ -50,10 +59,24 @@ RUNS_DIR = Path(
 )
 CODE_DIRS = (ANALYSIS_DIR / "ml", ANALYSIS_DIR / "common")
 RUN_ID_LENGTH = 12
-PACKAGES = ("polars", "numpy", "scikit-learn", "scipy", "matplotlib", "seaborn")
+PACKAGES = (
+    "polars",
+    "numpy",
+    "scikit-learn",
+    "imbalanced-learn",
+    "scipy",
+    "joblib",
+    "matplotlib",
+    "seaborn",
+)
 
 _TMP_SUFFIX = ".tmp"
 _INDEX_NAME = "index"
+
+
+def experiment_dir(experiment: str, runs_dir: Path = RUNS_DIR) -> Path:
+    """Directory holding one experiment's runs and index."""
+    return runs_dir / experiment
 
 
 def canonical_json(value: Any) -> str:
@@ -140,6 +163,7 @@ class Run:
     run_id: str
     path: Path
     metrics: dict[str, Any] = field(default_factory=dict)
+    models: dict[str, str] = field(default_factory=dict)
 
     @property
     def tables_dir(self) -> Path:
@@ -153,6 +177,31 @@ class Run:
         self.tables_dir.mkdir(parents=True, exist_ok=True)
         path = self.tables_dir / f"{name}.parquet"
         table.write_parquet(path)
+        return path
+
+    @property
+    def models_dir(self) -> Path:
+        return self.path / "models"
+
+    def save_model(self, name: str, model: Any, meta: Mapping[str, Any]) -> Path:
+        """Pickles `model` to models/<name>.joblib and writes <name>.json:
+        `meta` (feature names, threshold, ...) plus the file's sha256 and
+        the package versions it was trained with."""
+        self.models_dir.mkdir(parents=True, exist_ok=True)
+        path = self.models_dir / f"{name}.joblib"
+        joblib.dump(model, path)
+        digest = file_sha256(path)
+        self.models[name] = digest
+        _write_json(
+            self.models_dir / f"{name}.json",
+            {
+                **meta,
+                "name": name,
+                "sha256": digest,
+                "bytes": path.stat().st_size,
+                "packages": _package_versions(),
+            },
+        )
         return path
 
     def log_metrics(self, **values: Any) -> None:
@@ -220,6 +269,7 @@ def execute(
                 for name, path in inputs.items()
             },
             "code_sha256": code_sha256(code_dirs),
+            "models": run.models,
             "git_sha": _git("rev-parse", "HEAD"),
             "git_dirty": None if git_status is None else bool(git_status),
             "packages": _package_versions(),
@@ -280,6 +330,22 @@ def rebuild_index(runs_dir: Path = RUNS_DIR) -> pl.DataFrame:
     index.write_parquet(runs_dir / f"{_INDEX_NAME}.parquet")
     index.write_csv(runs_dir / f"{_INDEX_NAME}.csv")
     return index
+
+
+def load_model(run_path: Path, name: str) -> tuple[Any, dict[str, Any]]:
+    """(model, metadata) saved by Run.save_model in a finished run. Refuses
+    (ValueError) a file whose sha256 doesn't match its metadata and the
+    run's manifest, before unpickling anything."""
+    if not is_complete(run_path):
+        raise FileNotFoundError(f"No finished run at {run_path}")
+    manifest = json.loads((run_path / "manifest.json").read_text())
+    path = run_path / "models" / f"{name}.joblib"
+    meta = json.loads(path.with_suffix(".json").read_text())
+    expected = manifest.get("models", {}).get(name)
+    actual = file_sha256(path)
+    if expected is None or not (actual == expected == meta["sha256"]):
+        raise ValueError(f"Model {name!r} in {run_path} doesn't match its manifest")
+    return joblib.load(path), meta
 
 
 def load_run(path: Path) -> dict[str, Any]:

@@ -10,8 +10,10 @@ from honeypot.analysis.ml.runs import (
     code_sha256,
     compute_run_id,
     execute,
+    experiment_dir,
     file_sha256,
     flatten,
+    load_model,
     load_run,
     rebuild_index,
 )
@@ -165,3 +167,41 @@ def test_flatten_keeps_nested_scalars_only() -> None:
         "a.b": 1,
         "d": "x",
     }
+
+
+def _model_body(run: Run) -> None:
+    from sklearn.linear_model import LogisticRegression
+
+    x = [[0.0], [1.0], [2.0], [3.0]]
+    model = LogisticRegression().fit(x, [0, 0, 1, 1])
+    run.save_model("clf", model, {"threshold": 0.5, "features": ["x"]})
+    run.log_metrics(score=1.0)
+
+
+def test_saved_model_round_trips_and_is_in_manifest(setup: dict) -> None:
+    result = execute(_model_body, **setup)
+    model, meta = load_model(result.path, "clf")
+    assert meta["threshold"] == 0.5
+    assert meta["features"] == ["x"]
+    assert meta["packages"]["scikit-learn"]
+    assert model.predict([[0.0], [3.0]]).tolist() == [0, 1]
+    manifest = load_run(result.path)["manifest"]
+    assert manifest["models"] == {"clf": meta["sha256"]}
+
+
+def test_tampered_model_is_refused_before_unpickling(setup: dict) -> None:
+    result = execute(_model_body, **setup)
+    path = result.path / "models" / "clf.joblib"
+    path.write_bytes(path.read_bytes() + b"\0")
+    with pytest.raises(ValueError, match="doesn't match"):
+        load_model(result.path, "clf")
+
+
+def test_experiments_keep_separate_runs_and_indexes(setup: dict) -> None:
+    root = setup["runs_dir"]
+    for experiment in ("first", "second"):
+        execute(_body, **(setup | {"runs_dir": experiment_dir(experiment, root)}))
+    for experiment in ("first", "second"):
+        index = pl.read_parquet(experiment_dir(experiment, root) / "index.parquet")
+        assert index.height == 1
+    assert not (root / "index.parquet").exists()

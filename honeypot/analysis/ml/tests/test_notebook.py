@@ -26,4 +26,4 @@ def test_campaigns_notebook_runs_end_to_end(tmp_path: Path) -> None:
     )
 
     assert _errors(executed) == []
-    assert len(list((tmp_path / "runs").glob("*/manifest.json"))) == 1
+    assert len(list((tmp_path / "runs" / "campaigns").glob("*/manifest.json"))) == 1

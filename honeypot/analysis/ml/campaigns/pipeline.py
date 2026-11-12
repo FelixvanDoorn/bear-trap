@@ -60,10 +60,11 @@ from honeypot.analysis.ml.campaigns.clustering import (
     tuning_with_selection,
 )
 from honeypot.analysis.ml.campaigns.profiles import ip_profiles
-from honeypot.analysis.ml.runs import RUNS_DIR, Run, RunResult, execute
+from honeypot.analysis.ml.runs import Run, RunResult, execute, experiment_dir
 from honeypot.analysis.ml.splits import assign_splits, split_summary
 from honeypot.analysis.network.ai_targeting import ai_targeting_ips
 
+EXPERIMENT = "campaigns"
 ASSIGNMENT_COLUMNS = (
     "src_ip",
     "split",
@@ -237,7 +238,7 @@ def run(
     mode: str = "offline",
     snapshot_path: Path | None = None,
     config: CampaignConfig | None = None,
-    runs_dir: Path = RUNS_DIR,
+    runs_dir: Path = experiment_dir(EXPERIMENT),
     snapshot_dir: Path = SNAPSHOT_DIR,
     enrichment_dir: Path = ENRICHMENT_DIR,
     threatintel_dir: Path = THREATINTEL_DIR,
