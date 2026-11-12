@@ -44,7 +44,11 @@
 # Selection per horizon (`select`): the best mean PR-AUC; every candidate
 # whose fold-by-fold shortfall from it is within one standard error counts
 # as tied (the folds can't tell them apart), and the tie goes to the
-# simplest model, then the higher mean. The decision threshold comes from
+# simplest model, then the best calibrated (lowest mean Brier score): within
+# a tie PR-AUC differences are noise, calibration differences are not, and
+# a calibrated model's scores can be read as probabilities. (Run
+# 27ca55659c0a and earlier broke ties on the higher PR-AUC mean.) The
+# decision threshold comes from
 # the chosen candidate's out-of-fold predictions (max F1, and the lowest
 # threshold reaching the target precision).
 import json
@@ -466,7 +470,8 @@ def select(summary: pl.DataFrame, per_fold: pl.DataFrame) -> dict[str, Any]:
     swings a lot between folds). So a candidate is tied with the best when
     its mean shortfall over the folds is within one standard error of that
     shortfall -- the one-standard-error rule on the differences, not on
-    each candidate's own spread."""
+    each candidate's own spread. Among the tied: the simplest model, then
+    the lowest mean Brier score, then the higher PR-AUC mean."""
     best = summary.sort("pr_auc_mean", descending=True).row(0, named=True)
     folds = per_fold.pivot(on="candidate", index="fold", values="pr_auc").sort("fold")
     best_scores = folds[best["candidate"]].to_numpy()
@@ -484,9 +489,9 @@ def select(summary: pl.DataFrame, per_fold: pl.DataFrame) -> dict[str, Any]:
             .alias("order")
         )
     )
-    chosen = tied.sort(["order", "pr_auc_mean"], descending=[False, True]).row(
-        0, named=True
-    )
+    chosen = tied.sort(
+        ["order", "brier_mean", "pr_auc_mean"], descending=[False, False, True]
+    ).row(0, named=True)
     for key in ("order", "gap", "gap_se"):
         chosen.pop(key)
     chosen["best_candidate"] = best["candidate"]
@@ -494,7 +499,7 @@ def select(summary: pl.DataFrame, per_fold: pl.DataFrame) -> dict[str, Any]:
     chosen["rule"] = (
         f"simplest of {tied.height} candidates whose mean fold-by-fold "
         f"shortfall from the best ({best['pr_auc_mean']:.3f}) is within one "
-        "standard error"
+        "standard error, then the best calibrated (lowest Brier)"
     )
     return chosen
 

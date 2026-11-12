@@ -117,15 +117,51 @@ def test_select_judges_ties_on_paired_fold_differences() -> None:
     )
     summary = pl.DataFrame(
         [
-            {"candidate": "best", "model": "gradient_boosting", "pr_auc_mean": 0.7},
-            {"candidate": "noisy", "model": "logistic", "pr_auc_mean": 0.694},
-            {"candidate": "worse", "model": "naive_bayes", "pr_auc_mean": 0.68},
+            {"candidate": c, "model": m, "pr_auc_mean": v, "brier_mean": 0.05}
+            for c, m, v in (
+                ("best", "gradient_boosting", 0.7),
+                ("noisy", "logistic", 0.694),
+                ("worse", "naive_bayes", 0.68),
+            )
         ]
     )
     chosen = select(summary, per_fold)
     assert chosen["candidate"] == "noisy"
     assert chosen["best_candidate"] == "best"
     assert chosen["tied_candidates"] == 2
+
+
+def test_select_breaks_ties_within_a_model_on_calibration() -> None:
+    folds = [0.9, 0.5, 0.8, 0.6, 0.7]
+    candidates = {
+        # name: (model, fold scores, Brier)
+        "boosting": ("gradient_boosting", folds, 0.02),
+        "logistic_weighted": ("logistic", [0.899, 0.499, 0.799, 0.599, 0.72], 0.07),
+        "logistic_plain": ("logistic", [0.92, 0.47, 0.79, 0.61, 0.69], 0.02),
+    }
+    per_fold = pl.DataFrame(
+        [
+            {"candidate": c, "fold": i, "pr_auc": v}
+            for c, (_, values, _) in candidates.items()
+            for i, v in enumerate(values)
+        ]
+    )
+    summary = pl.DataFrame(
+        [
+            {
+                "candidate": c,
+                "model": m,
+                "pr_auc_mean": float(np.mean(values)),
+                "brier_mean": brier,
+            }
+            for c, (m, values, brier) in candidates.items()
+        ]
+    )
+    chosen = select(summary, per_fold)
+    assert chosen["tied_candidates"] == 3
+    # Simplicity first (logistic over boosting), then calibration over the
+    # (noise-level) higher PR-AUC of the class-weighted variant.
+    assert chosen["candidate"] == "logistic_plain"
 
 
 def test_thresholds() -> None:
